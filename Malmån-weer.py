@@ -28,12 +28,14 @@ STATION_MAP = {
 }
 
 # Lijst van numerieke kolommen die gevisualiseerd kunnen worden
+# GEFIXTE LIJST: Naam is overal 'dauwpunt' (met 'w') om te matchen met de brondata.
 NUMERIC_COLS = ['battery', 'dauwpunt', 'luchtvocht', 'druk', 'zoninstraling', 'temp', 'natbol']
 
 # Vriendelijke namen voor kolommen in de UI en grafieken
 COL_DISPLAY_MAP = {
     'battery': 'Batterijspanning (V)',
-    'dauwpunt': 'Dauwpunt (°C)',
+    # GEFIXTE MAPPING: Gebruikt 'dauwpunt' (met 'w')
+    'dauwpunt': 'Dauwpunt (°C)', 
     'luchtvocht': 'Luchtvochtigheid (%)',
     'druk': 'Luchtdruk (hPa)', 
     'zoninstraling': 'Zoninstraling (W/m²)',
@@ -95,6 +97,7 @@ def load_data(station_id, years, github_base_url, station_map, target_timezone):
             df = df.dropna(subset=['Timestamp_UTC'])
 
             for col in NUMERIC_COLS:
+                # Door NUMERIC_COLS op 'dauwpunt' (met 'w') te zetten, wordt hier nu de juiste kolom uit het bestand gezocht
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             if 'druk' in df.columns:
@@ -114,6 +117,19 @@ def load_data(station_id, years, github_base_url, station_map, target_timezone):
         return df_station.sort_values('Timestamp_Local').copy() 
     else:
         return pd.DataFrame() 
+
+
+# Nieuwe, veilige formatteer functie
+def safe_format_temp(x):
+    """Formats numeric value x to 'X.X °C', returns empty string for NaN or non-numeric types."""
+    if pd.isna(x):
+        return ""
+    try:
+        # Probeer om te zetten naar float en formatteer
+        return f"{float(x):.1f} °C"
+    except (ValueError, TypeError):
+        # Vang op als x een onverwacht type is dat niet naar float kan
+        return "" 
 
 
 def find_consecutive_periods(df_filtered, min_days, temp_column):
@@ -161,12 +177,103 @@ def find_consecutive_periods(df_filtered, min_days, temp_column):
     # Formatteer voor weergave
     periods_combined['StartDatum'] = periods_combined['StartDatum'].dt.strftime('%d-%m-%Y')
     periods_combined['EindDatum'] = periods_combined['EindDatum'].dt.strftime('%d-%m-%Y')
-    periods_combined['Gemiddelde_Temp_Periode'] = periods_combined['Gemiddelde_Temp_Periode'].apply(lambda x: f"{x:.1f} °C")
+    
+    # Gebruik safe_format_temp met .map() om TypeErrors te voorkomen
+    periods_combined['Gemiddelde_Temp_Periode'] = periods_combined['Gemiddelde_Temp_Periode'].map(safe_format_temp)
 
     total_periods = len(periods_combined)
     
     return periods_combined.reset_index(drop=True), total_periods
 
+
+# -------------------------------------------------------------------
+# GECORRIGEERDE FUNCTIE: Extremen Analyse
+# -------------------------------------------------------------------
+def find_extreme_days(df_daily_summary, top_n=5):
+    """
+    Vindt de warmste (Max en Min Temp), koudste (Max en Min Temp), en
+    meest extreme (grootste dagelijkse range) dagen uit de dagelijkse samenvatting.
+    """
+    if df_daily_summary.empty:
+        return {}
+
+    # 1. Bereken de dagelijkse temperatuur range
+    df_analysis = df_daily_summary.copy()
+    df_analysis['Temp_Range_C'] = df_analysis['Temp_High_C'] - df_analysis['Temp_Low_C']
+
+    results = {}
+
+    # Definities van extremen (key: (kolom, ascending (True=oplopend/koud), display_col_focus))
+    extremes_config = {
+        # Warmte Extremen
+        'hoogste_max_temp': ('Temp_High_C', False, 'Max Temp (°C)'),  # Warmste dag (Max Temp Top 5)
+        'hoogste_min_temp': ('Temp_Low_C', False, 'Min Temp (°C)'),   # Warmste nacht (Min Temp Top 5)
+        
+        # Koude Extremen
+        'laagste_min_temp': ('Temp_Low_C', True, 'Min Temp (°C)'),    # Koudste nacht (Min Temp Bottom 5)
+        'laagste_max_temp': ('Temp_High_C', True, 'Max Temp (°C)'),   # Koudste dag (Max Temp Bottom 5)
+        
+        # Range Extreem
+        'grootste_range': ('Temp_Range_C', False, 'Range (°C)')
+    }
+
+    for key, (column, ascending, display_col) in extremes_config.items():
+        
+        # Groepeer per station en pak de top N (of bottom N via ascending)
+        extreme_df_list = []
+        for station, group in df_analysis.groupby('Station Naam'):
+            
+            top_days = group.sort_values(by=column, ascending=ascending).head(top_n)
+
+            # 1. Maak de display DataFrame. 'Date' komt uit de index via reset_index()
+            df_display = top_days.reset_index().copy()
+
+            # 2. Formatteer de datum EERST, maak een NIEUWE kolom 'Datum' aan, en verwijder de oude 'Date' kolom
+            if 'Date' in df_display.columns:
+                 # Maak de geformatteerde kolom 'Datum' (deze is nu gegarandeerd aanwezig)
+                 df_display['Datum'] = df_display['Date'].dt.strftime('%d-%m-%Y')
+                 # Verwijder de oude kolom 'Date'
+                 df_display = df_display.drop(columns=['Date']) 
+            
+            # 3. Definieer de renames (van interne, numerieke kolomnamen naar display namen)
+            rename_dict = {
+                'Temp_High_C': 'Max Temp (°C)', 
+                'Temp_Low_C': 'Min Temp (°C)',
+                'Temp_Range_C': 'Range (°C)' 
+            }
+            
+            # Expliciet hernoemen van de numerieke kolommen
+            df_display = df_display.rename(columns=rename_dict)
+            
+            # 4. Formatteer voor weergave (gebruik safe_format_temp)
+            temp_display_cols = ['Max Temp (°C)', 'Min Temp (°C)', 'Range (°C)']
+            for col_name in temp_display_cols:
+                if col_name in df_display.columns:
+                     # Formatteer de numerieke waarden in de hernoemde kolom
+                     df_display[col_name] = df_display[col_name].map(safe_format_temp)
+
+
+            # 5. Herschikking van kolommen: Toon enkel de focus-kolom (tenzij het Range is)
+            if key in ['hoogste_max_temp', 'laagste_max_temp']:
+                 # Toon enkel Max Temp
+                 final_cols_order = ['Datum', 'Station Naam', 'Max Temp (°C)']
+            elif key in ['hoogste_min_temp', 'laagste_min_temp']:
+                 # Toon enkel Min Temp
+                 final_cols_order = ['Datum', 'Station Naam', 'Min Temp (°C)']
+            else: # grootste_range
+                 # Toon alle kolommen (Range, Max en Min)
+                 final_cols_order = ['Datum', 'Station Naam', 'Range (°C)', 'Max Temp (°C)', 'Min Temp (°C)']
+            
+            # Filter op de gewenste eindkolomvolgorde
+            df_final_display = df_display[[c for c in final_cols_order if c in df_display.columns]].copy()
+            
+            extreme_df_list.append(df_final_display)
+
+        if extreme_df_list:
+             # Sorteer op Station Naam voor een consistente weergave
+             results[key] = pd.concat(extreme_df_list, ignore_index=True).sort_values(by='Station Naam', ascending=True)
+
+    return results
 
 # 3. Streamlit Applicatie Hoofdsectie (Streamlit Application Main)
 
@@ -326,6 +433,7 @@ if not df_combined.empty:
     with st.sidebar.expander("📈 Grafiek Variabelen", expanded=False):
         st.header("Grafiek Opties")
 
+        # Deze regel gebruikt nu de consistente namen: 'dauwpunt' (met 'w')
         plot_options = [COL_DISPLAY_MAP[col] for col in NUMERIC_COLS if col in df_combined.columns]
         
         default_selection = []
@@ -576,10 +684,11 @@ if not df_combined.empty:
     
     # --- Main Content: Tabs ---
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Grafiek", "🔍 Data Zoeken", "❄️ Historische Analyse", "🗓️ Maand/Jaar Analyse"])
+    # FIX: 5 tabs gedefinieerd
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Grafiek", "🔍 Data Zoeken", "❄️ Historische Analyse", "🗓️ Maand/Jaar Analyse", "🔥 Extreme Dagen"])
 
     # -------------------------------------------------------------------
-    # TAB 1: GRAFIEK (ALTAIR) (Onveranderd)
+    # TAB 1: GRAFIEK (ALTAIR)
     # -------------------------------------------------------------------
     with tab1:
         st.header("Vergelijking Weergrafieken")
@@ -631,7 +740,7 @@ if not df_combined.empty:
             st.warning("Selecteer minstens één variabele in de zijbalk om een grafiek te maken.")
 
     # -------------------------------------------------------------------
-    # TAB 2: RUWE DATA (Onveranderd)
+    # TAB 2: RUWE DATA
     # -------------------------------------------------------------------
     with tab2:
         st.header("Ruwe Data Zoeken (Gefilterd)")
@@ -661,7 +770,7 @@ if not df_combined.empty:
             st.info("Geen data om weer te geven. Pas het tijdsbereik aan.")
 
     # -------------------------------------------------------------------
-    # TAB 3: HISTORISCHE ANALYSE (Onveranderd)
+    # TAB 3: HISTORISCHE ANALYSE
     # -------------------------------------------------------------------
     with tab3:
         st.header("Historische Analyse (Dagelijkse Samenvatting)")
@@ -712,7 +821,7 @@ if not df_combined.empty:
         st.markdown("---")
 
 
-        if df_filtered_condition.empty:
+        if df_filtered_condition.empty and filter_mode != "Hellmann Getal Berekenen":
             st.info("Geen dagen gevonden die voldoen aan de ingestelde filters.")
             
         elif filter_mode == "Losse Dagen":
@@ -730,6 +839,11 @@ if not df_combined.empty:
             st.subheader("Gevonden Dagen")
             df_display = df_final.copy().reset_index().rename(columns={'Date': 'Datum', 'Temp_High_C': 'Max Temp (°C)', 'Temp_Low_C': 'Min Temp (°C)', 'Temp_Avg_C': 'Gem Temp (°C)', 'Hum_Avg_P': 'Gem Vochtigheid (%)', 'Pres_Avg_hPa': 'Gem Druk (hPa)'})
             df_display['Datum'] = df_display['Datum'].dt.strftime('%d-%m-%Y')
+            
+            # Gebruik safe_format_temp voor weergave
+            for col in ['Max Temp (°C)', 'Min Temp (°C)', 'Gem Temp (°C)']:
+                 df_display[col] = df_display[col].map(safe_format_temp)
+
 
             st.dataframe(df_display.set_index('Datum')[['Station Naam', 'Max Temp (°C)', 'Min Temp (°C)', 'Gem Temp (°C)', 'Gem Vochtigheid (%)', 'Gem Druk (hPa)']], use_container_width=True)
             
@@ -804,11 +918,16 @@ if not df_combined.empty:
                 st.subheader("Alle Vorstdagen (Tgem $\\le$ 0.0 °C)")
                 
                 df_display = df_filtered_condition.reset_index().rename(columns={'Date': 'Datum', 'Temp_Avg_C': 'Gem Temp (°C)', 'Temp_Low_C': 'Min Temp (°C)'})
-                df_display['Vorstbijdrage'] = df_display['Gem Temp (°C)'].apply(lambda x: f"{x:.1f} °C")
+                
+                # FIX: Gebruik safe_format_temp voor robuustheid
+                df_display['Vorstbijdrage'] = df_display['Gem Temp (°C)'].map(safe_format_temp)
+                df_display['Min Temp (°C)'] = df_display['Min Temp (°C)'].map(safe_format_temp)
+                
                 st.dataframe(df_display.set_index('Datum')[['Station Naam', 'Min Temp (°C)', 'Gem Temp (°C)', 'Vorstbijdrage']], use_container_width=True)
 
+
     # -------------------------------------------------------------------
-    # NIEUW: TAB 4: MAAND/JAAR ANALYSE
+    # TAB 4: MAAND/JAAR ANALYSE
     # -------------------------------------------------------------------
     with tab4:
         st.header(f"🗓️ Gedetailleerde Analyse voor {titel_periode}")
@@ -851,8 +970,14 @@ if not df_combined.empty:
                     col1, col2, col3, col4 = st.columns(4) 
                     
                     # De datums zijn nu pd.Timestamp objecten door idxmax/idxmin
-                    max_date_str = row['max_temp_date'].strftime('%d-%m-%Y')
-                    min_date_str = row['min_temp_date'].strftime('%d-%m-%Y')
+                    max_date_str = "N/A"
+                    if pd.notna(row['max_temp_date']):
+                         max_date_str = row['max_temp_date'].strftime('%d-%m-%Y')
+                    
+                    min_date_str = "N/A"
+                    if pd.notna(row['min_temp_date']):
+                         min_date_str = row['min_temp_date'].strftime('%d-%m-%Y')
+
 
                     with col1:
                         st.metric(label="Gemiddelde Temp", value=f"{row['avg_temp']:.1f} °C")
@@ -895,3 +1020,72 @@ if not df_combined.empty:
                     xaxis_title="Datum", yaxis_title="Temperatuur (°C)", hovermode="x unified", template="plotly_white"
                 )
                 st.plotly_chart(fig_temp, use_container_width=True)
+
+    # -------------------------------------------------------------------
+    # TAB 5: EXTREME DAGEN (Volledige Dataset)
+    # -------------------------------------------------------------------
+    with tab5:
+        st.header(f"🔥 Extreme Dagen (Analyse over de Volledige Dataset)")
+        st.markdown(f"Dit overzicht toont de Top 5 extremen van de gehele beschikbare database ({df_daily_summary.index.min().strftime('%d-%m-%Y')} t/m {df_daily_summary.index.max().strftime('%d-%m-%Y')}).")
+        st.markdown("---")
+        
+        if df_daily_summary.empty:
+            st.warning("Geen dagelijkse samenvattingsdata beschikbaar voor deze analyse.")
+        else:
+            
+            # Bereken de extreme dagen met de gecorrigeerde functie over de volledige data
+            extreme_results_full = find_extreme_days(df_daily_summary, top_n=5)
+            
+            # Nieuwe Sub-tabs voor de 5 categorieën
+            tab_high_max, tab_high_min, tab_low_min, tab_low_max, tab_range = st.tabs([
+                "🔥 Hoogste Max Temp", 
+                "☀️ Hoogste Min Temp", 
+                "🥶 Laagste Min Temp", 
+                "🌬️ Laagste Max Temp", 
+                "🌡️ Grootste Dagelijkse Range"
+            ])
+            
+            # --- Hoogste Max Temp ---
+            with tab_high_max:
+                st.subheader("Hoogste Maximum Temperatuur (Top 5 per station) - De Warmste Dagen")
+                st.info("De dagen met de absoluut hoogste gemeten temperatuur.")
+                if 'hoogste_max_temp' in extreme_results_full and not extreme_results_full['hoogste_max_temp'].empty:
+                    st.dataframe(extreme_results_full['hoogste_max_temp'].set_index('Datum'), use_container_width=True)
+                else:
+                    st.info("Geen data gevonden.")
+            
+            # --- Hoogste Min Temp (Warmste Nacht) ---
+            with tab_high_min:
+                st.subheader("Hoogste Minimum Temperatuur (Top 5 per station) - De Warmste Nachten")
+                st.info("De dagen waarop het 's nachts/ochtends het warmst bleef (afkoelde het minst).")
+                if 'hoogste_min_temp' in extreme_results_full and not extreme_results_full['hoogste_min_temp'].empty:
+                    st.dataframe(extreme_results_full['hoogste_min_temp'].set_index('Datum'), use_container_width=True)
+                else:
+                    st.info("Geen data gevonden.")
+                    
+            # --- Laagste Min Temp (Koudste Nacht) ---
+            with tab_low_min:
+                st.subheader("Laagste Minimum Temperatuur (Top 5 per station) - De Koudste Nachten")
+                st.info("De dagen waarop de temperatuur het diepst zakte.")
+                if 'laagste_min_temp' in extreme_results_full and not extreme_results_full['laagste_min_temp'].empty:
+                    st.dataframe(extreme_results_full['laagste_min_temp'].set_index('Datum'), use_container_width=True)
+                else:
+                    st.info("Geen data gevonden.")
+                    
+            # --- Laagste Max Temp (Koudste Dag) ---
+            with tab_low_max:
+                st.subheader("Laagste Maximum Temperatuur (Top 5 per station) - De Koudste Dagen")
+                st.info("De dagen waarop de temperatuur overdag het laagst bleef (warmde het minst op).")
+                if 'laagste_max_temp' in extreme_results_full and not extreme_results_full['laagste_max_temp'].empty:
+                    st.dataframe(extreme_results_full['laagste_max_temp'].set_index('Datum'), use_container_width=True)
+                else:
+                    st.info("Geen data gevonden.")
+                    
+            # --- Grootste Range ---
+            with tab_range:
+                st.subheader("Grootste Dagelijkse Temperatuurbereik (Top 5 Range per station)")
+                st.info("De Dagelijkse Range is het verschil tussen de Max Temp en de Min Temp op die dag (Grote schommelingen).")
+                if 'grootste_range' in extreme_results_full and not extreme_results_full['grootste_range'].empty:
+                    st.dataframe(extreme_results_full['grootste_range'].set_index('Datum'), use_container_width=True)
+                else:
+                    st.info("Geen data gevonden.")
