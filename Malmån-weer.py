@@ -28,13 +28,11 @@ STATION_MAP = {
 }
 
 # Lijst van numerieke kolommen die gevisualiseerd kunnen worden
-# GEFIXTE LIJST: Naam is overal 'dauwpunt' (met 'w') om te matchen met de brondata.
 NUMERIC_COLS = ['battery', 'dauwpunt', 'luchtvocht', 'druk', 'zoninstraling', 'temp', 'natbol']
 
 # Vriendelijke namen voor kolommen in de UI en grafieken
 COL_DISPLAY_MAP = {
     'battery': 'Batterijspanning (V)',
-    # GEFIXTE MAPPING: Gebruikt 'dauwpunt' (met 'w')
     'dauwpunt': 'Dauwpunt (°C)', 
     'luchtvocht': 'Luchtvochtigheid (%)',
     'druk': 'Luchtdruk (hPa)', 
@@ -97,7 +95,6 @@ def load_data(station_id, years, github_base_url, station_map, target_timezone):
             df = df.dropna(subset=['Timestamp_UTC'])
 
             for col in NUMERIC_COLS:
-                # Door NUMERIC_COLS op 'dauwpunt' (met 'w') te zetten, wordt hier nu de juiste kolom uit het bestand gezocht
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             if 'druk' in df.columns:
@@ -191,8 +188,9 @@ def find_consecutive_periods(df_filtered, min_days, temp_column):
 # -------------------------------------------------------------------
 def find_extreme_days(df_daily_summary, top_n=5):
     """
-    Vindt de warmste (Max en Min Temp), koudste (Max en Min Temp), en
-    meest extreme (grootste dagelijkse range) dagen uit de dagelijkse samenvatting.
+    Vindt de warmste (Max en Min Temp), koudste (Max en Min Temp), meest extreme 
+    (grootste dagelijkse range) dagen en de hoogste/laagste GEMIDDELDE temperaturen 
+    uit de dagelijkse samenvatting.
     """
     if df_daily_summary.empty:
         return {}
@@ -208,10 +206,12 @@ def find_extreme_days(df_daily_summary, top_n=5):
         # Warmte Extremen
         'hoogste_max_temp': ('Temp_High_C', False, 'Max Temp (°C)'),  # Warmste dag (Max Temp Top 5)
         'hoogste_min_temp': ('Temp_Low_C', False, 'Min Temp (°C)'),   # Warmste nacht (Min Temp Top 5)
+        'hoogste_gem_temp': ('Temp_Avg_C', False, 'Gem Temp (°C)'),   # NIEUW: Warmste dag (Gem Temp Top 5)
         
         # Koude Extremen
         'laagste_min_temp': ('Temp_Low_C', True, 'Min Temp (°C)'),    # Koudste nacht (Min Temp Bottom 5)
         'laagste_max_temp': ('Temp_High_C', True, 'Max Temp (°C)'),   # Koudste dag (Max Temp Bottom 5)
+        'laagste_gem_temp': ('Temp_Avg_C', True, 'Gem Temp (°C)'),    # NIEUW: Koudste dag (Gem Temp Bottom 5)
         
         # Range Extreem
         'grootste_range': ('Temp_Range_C', False, 'Range (°C)')
@@ -239,6 +239,7 @@ def find_extreme_days(df_daily_summary, top_n=5):
             rename_dict = {
                 'Temp_High_C': 'Max Temp (°C)', 
                 'Temp_Low_C': 'Min Temp (°C)',
+                'Temp_Avg_C': 'Gem Temp (°C)',
                 'Temp_Range_C': 'Range (°C)' 
             }
             
@@ -246,7 +247,8 @@ def find_extreme_days(df_daily_summary, top_n=5):
             df_display = df_display.rename(columns=rename_dict)
             
             # 4. Formatteer voor weergave (gebruik safe_format_temp)
-            temp_display_cols = ['Max Temp (°C)', 'Min Temp (°C)', 'Range (°C)']
+            # Pas de lijst van te formatteren kolommen aan
+            temp_display_cols = ['Max Temp (°C)', 'Min Temp (°C)', 'Range (°C)', 'Gem Temp (°C)']
             for col_name in temp_display_cols:
                 if col_name in df_display.columns:
                      # Formatteer de numerieke waarden in de hernoemde kolom
@@ -260,6 +262,9 @@ def find_extreme_days(df_daily_summary, top_n=5):
             elif key in ['hoogste_min_temp', 'laagste_min_temp']:
                  # Toon enkel Min Temp
                  final_cols_order = ['Datum', 'Station Naam', 'Min Temp (°C)']
+            elif key in ['hoogste_gem_temp', 'laagste_gem_temp']:
+                 # Toon enkel Gem Temp
+                 final_cols_order = ['Datum', 'Station Naam', 'Gem Temp (°C)']
             else: # grootste_range
                  # Toon alle kolommen (Range, Max en Min)
                  final_cols_order = ['Datum', 'Station Naam', 'Range (°C)', 'Max Temp (°C)', 'Min Temp (°C)']
@@ -274,6 +279,27 @@ def find_extreme_days(df_daily_summary, top_n=5):
              results[key] = pd.concat(extreme_df_list, ignore_index=True).sort_values(by='Station Naam', ascending=True)
 
     return results
+
+# -------------------------------------------------------------------
+# HULPFUNCTIE: Voor een nette weergave in Tab 5
+# -------------------------------------------------------------------
+def display_extreme_results_by_station(df_results, title, info_text):
+    """Toont extreme dagen, gegroepeerd per station met een duidelijke kop."""
+    st.markdown(f"### {title}")
+    st.info(info_text)
+    
+    if df_results is None or df_results.empty:
+        st.warning("Geen data gevonden voor deze extreme categorie.")
+        return
+
+    # Groepeer op Station Naam om de tabellen te splitsen
+    for station_name, df_station in df_results.groupby('Station Naam'):
+        st.markdown(f"##### 📌 Station: **{station_name}**")
+        # Zet 'Datum' als index voor een nette weergave, toon enkel de relevante kolommen
+        display_cols = [c for c in df_station.columns if c not in ['Station Naam']]
+        st.dataframe(df_station[display_cols].set_index('Datum'), use_container_width=True)
+        st.markdown("---") # Visuele scheiding tussen de stations
+
 
 # 3. Streamlit Applicatie Hoofdsectie (Streamlit Application Main)
 
@@ -418,8 +444,6 @@ if not df_combined.empty:
         Temp_Avg_C=('temp', 'mean'),
         Pres_Avg_hPa=('druk', 'mean'), # Luchtdruk wordt gemiddeld
         Hum_Avg_P=('luchtvocht', 'mean'), # Vochtigheid wordt gemiddeld
-        # Geen neerslag in NUMERIC_COLS, dus we kunnen die niet aggregeren tenzij we de kolom toevoegen.
-        # Voor nu houden we de kolommen die we hebben.
     ).dropna(subset=['Temp_Avg_C']).reset_index()
 
     # Zorg ervoor dat de index de datum is voor de filtering en resampling
@@ -433,7 +457,6 @@ if not df_combined.empty:
     with st.sidebar.expander("📈 Grafiek Variabelen", expanded=False):
         st.header("Grafiek Opties")
 
-        # Deze regel gebruikt nu de consistente namen: 'dauwpunt' (met 'w')
         plot_options = [COL_DISPLAY_MAP[col] for col in NUMERIC_COLS if col in df_combined.columns]
         
         default_selection = []
@@ -442,14 +465,24 @@ if not df_combined.empty:
         if temp_display_name in plot_options:
             default_selection = [temp_display_name]
             
-        selected_variables_display = st.multiselect(
-            "Kies de variabelen voor de grafiek:",
+        # --- AANPASSING HIER: st.multiselect vervangen door st.selectbox ---
+        if default_selection:
+             default_index = plot_options.index(default_selection[0])
+        else:
+             default_index = 0
+             
+        selected_variable_display = st.selectbox(
+            "Kies de variabele voor de grafiek:",
             options=plot_options,
-            default=default_selection,
-            key='variables_select_' + '_'.join(selected_station_ids) 
+            index=default_index, 
+            key='variable_select_' + '_'.join(selected_station_ids) 
         )
         
-        selected_variables = [DISPLAY_TO_COL_MAP[d] for d in selected_variables_display]
+        # selected_variables is nu een lijst met slechts één element
+        selected_variables = [DISPLAY_TO_COL_MAP[selected_variable_display]]
+        
+        st.markdown(f"**Geselecteerde variabele:** `{selected_variable_display}`")
+
 
     # 💥 Sectie 3: Tijdsselectie (Live/Recent Data)
     with st.sidebar.expander("⏱️ Tijdsbereik (Grafiek/Ruwe Data)", expanded=False):
@@ -694,16 +727,23 @@ if not df_combined.empty:
         st.header("Vergelijking Weergrafieken")
         
         if selected_variables and not filtered_df.empty:
+            # selected_variables bevat nu maar één element [col_name]
             plot_df = filtered_df[['Timestamp_Local', 'Station Naam'] + selected_variables].rename(columns=COL_DISPLAY_MAP).melt(
                 ['Timestamp_Local', 'Station Naam'], 
                 var_name='Variabele Naam', 
                 value_name='Waarde'
             )
             
+            # De display naam van de geselecteerde variabele
+            variable_name_display = plot_df['Variabele Naam'].iloc[0]
+            
             base = alt.Chart(plot_df).encode(
                 x=alt.X('Timestamp_Local', title=f"Tijd ({TARGET_TIMEZONE.split('/')[1]} - Zomer/Wintertijd)", axis=None), 
-                y=alt.Y('Waarde', title="Waarde", scale=alt.Scale(zero=False)), 
+                y=alt.Y('Waarde', title=variable_name_display, scale=alt.Scale(zero=False)), # Gebruik de variabele naam als Y-as titel
+                
+                # FIX: Legenda terug naar rechts (werkt nu goed bij één plot)
                 color=alt.Color('Station Naam', title="Station", legend=alt.Legend(orient="right")), 
+                
                 tooltip=[
                     alt.Tooltip('Timestamp_Local', title='Tijd (Lokaal)', format='%Y-%m-%d %H:%M:%S'), 
                     'Station Naam',
@@ -711,33 +751,27 @@ if not df_combined.empty:
                     alt.Tooltip('Waarde', format='.2f')
                 ]
             ).properties(
-                title="Weerdata Tijdreeks Vergelijking",
-                width=680,
+                title=f"Weerdata Tijdreeks Vergelijking: {variable_name_display}", # Titel is nu duidelijker
             ).interactive() 
             
+            # --- GEEN FACETING MEER (GEEN ROW=ALT.ROW) ---
             line_chart = base.mark_line().encode(
                 x=alt.X(
                     'Timestamp_Local', 
                     title=f"Tijd ({TARGET_TIMEZONE.split('/')[1]} - Zomer/Wintertijd)",
                     axis=alt.Axis(format='%H:%M')
                 ),
-                row=alt.Row(
-                    'Variabele Naam', 
-                    title=None, 
-                    header=alt.Header(titleOrient="top", labelOrient="top")
-                ),
                 opacity=alt.value(0.8)
-            ).resolve_scale(
-                x='independent',
-                y='independent' 
-            )
+            ) # .resolve_scale(x='independent', y='independent') is nu ook niet meer nodig
             
-            st.altair_chart(line_chart, use_container_width=False)
+            # GEBRUIK use_container_width=True voor dynamische breedte
+            st.altair_chart(line_chart, use_container_width=True)
 
         elif filtered_df.empty:
-             st.warning("Er is geen data beschikbaar in het geselecteerde datumbereik of er zijn geen variabelen geselecteerd.")
+             st.warning("Er is geen data beschikbaar in het geselecteerde datumbereik.")
         else:
-            st.warning("Selecteer minstens één variabele in de zijbalk om een grafiek te maken.")
+            st.warning("Selecteer één variabele in de zijbalk om een grafiek te maken.")
+
 
     # -------------------------------------------------------------------
     # TAB 2: RUWE DATA
@@ -1036,56 +1070,69 @@ if not df_combined.empty:
             # Bereken de extreme dagen met de gecorrigeerde functie over de volledige data
             extreme_results_full = find_extreme_days(df_daily_summary, top_n=5)
             
-            # Nieuwe Sub-tabs voor de 5 categorieën
-            tab_high_max, tab_high_min, tab_low_min, tab_low_max, tab_range = st.tabs([
+            # Nieuwe Sub-tabs voor de 7 categorieën
+            tab_high_max, tab_high_min, tab_low_min, tab_low_max, tab_range, tab_high_avg, tab_low_avg = st.tabs([
                 "🔥 Hoogste Max Temp", 
                 "☀️ Hoogste Min Temp", 
                 "🥶 Laagste Min Temp", 
                 "🌬️ Laagste Max Temp", 
-                "🌡️ Grootste Dagelijkse Range"
+                "🌡️ Grootste Dagelijkse Range",
+                "📈 Hoogste Gem Temp", 
+                "📉 Laagste Gem Temp"
             ])
             
             # --- Hoogste Max Temp ---
             with tab_high_max:
-                st.subheader("Hoogste Maximum Temperatuur (Top 5 per station) - De Warmste Dagen")
-                st.info("De dagen met de absoluut hoogste gemeten temperatuur.")
-                if 'hoogste_max_temp' in extreme_results_full and not extreme_results_full['hoogste_max_temp'].empty:
-                    st.dataframe(extreme_results_full['hoogste_max_temp'].set_index('Datum'), use_container_width=True)
-                else:
-                    st.info("Geen data gevonden.")
+                display_extreme_results_by_station(
+                    extreme_results_full.get('hoogste_max_temp'), 
+                    "Hoogste Maximum Temperatuur (Top 5 per station) - De Warmste Dagen", 
+                    "De dagen met de absoluut hoogste gemeten temperatuur."
+                )
             
             # --- Hoogste Min Temp (Warmste Nacht) ---
             with tab_high_min:
-                st.subheader("Hoogste Minimum Temperatuur (Top 5 per station) - De Warmste Nachten")
-                st.info("De dagen waarop het 's nachts/ochtends het warmst bleef (afkoelde het minst).")
-                if 'hoogste_min_temp' in extreme_results_full and not extreme_results_full['hoogste_min_temp'].empty:
-                    st.dataframe(extreme_results_full['hoogste_min_temp'].set_index('Datum'), use_container_width=True)
-                else:
-                    st.info("Geen data gevonden.")
-                    
+                display_extreme_results_by_station(
+                    extreme_results_full.get('hoogste_min_temp'), 
+                    "Hoogste Minimum Temperatuur (Top 5 per station) - De Warmste Nachten", 
+                    "De dagen waarop het 's nachts/ochtends het warmst bleef (koelde het minst af)."
+                )
+            
             # --- Laagste Min Temp (Koudste Nacht) ---
             with tab_low_min:
-                st.subheader("Laagste Minimum Temperatuur (Top 5 per station) - De Koudste Nachten")
-                st.info("De dagen waarop de temperatuur het diepst zakte.")
-                if 'laagste_min_temp' in extreme_results_full and not extreme_results_full['laagste_min_temp'].empty:
-                    st.dataframe(extreme_results_full['laagste_min_temp'].set_index('Datum'), use_container_width=True)
-                else:
-                    st.info("Geen data gevonden.")
+                display_extreme_results_by_station(
+                    extreme_results_full.get('laagste_min_temp'), 
+                    "Laagste Minimum Temperatuur (Top 5 per station) - De Koudste Nachten", 
+                    "De dagen waarop de temperatuur het diepst zakte."
+                )
                     
             # --- Laagste Max Temp (Koudste Dag) ---
             with tab_low_max:
-                st.subheader("Laagste Maximum Temperatuur (Top 5 per station) - De Koudste Dagen")
-                st.info("De dagen waarop de temperatuur overdag het laagst bleef (warmde het minst op).")
-                if 'laagste_max_temp' in extreme_results_full and not extreme_results_full['laagste_max_temp'].empty:
-                    st.dataframe(extreme_results_full['laagste_max_temp'].set_index('Datum'), use_container_width=True)
-                else:
-                    st.info("Geen data gevonden.")
+                display_extreme_results_by_station(
+                    extreme_results_full.get('laagste_max_temp'), 
+                    "Laagste Maximum Temperatuur (Top 5 per station) - De Koudste Dagen", 
+                    "De dagen waarop de temperatuur overdag het laagst bleef (warmde het minst op)."
+                )
+            
+            # --- Hoogste Gem Temp (NIEUW) ---
+            with tab_high_avg:
+                display_extreme_results_by_station(
+                    extreme_results_full.get('hoogste_gem_temp'), 
+                    "Hoogste Gemiddelde Temperatuur (Top 5 per station) - De Warmste Gemiddelde Dagen", 
+                    "De dagen met het hoogste gemiddelde over 24 uur."
+                )
+
+            # --- Laagste Gem Temp (NIEUW) ---
+            with tab_low_avg:
+                display_extreme_results_by_station(
+                    extreme_results_full.get('laagste_gem_temp'), 
+                    "Laagste Gemiddelde Temperatuur (Top 5 per station) - De Koudste Gemiddelde Dagen", 
+                    "De dagen met het laagste gemiddelde over 24 uur."
+                )
                     
             # --- Grootste Range ---
             with tab_range:
-                st.subheader("Grootste Dagelijkse Temperatuurbereik (Top 5 Range per station)")
-                st.info("De Dagelijkse Range is het verschil tussen de Max Temp en de Min Temp op die dag (Grote schommelingen).")
-                if 'grootste_range' in extreme_results_full and not extreme_results_full['grootste_range'].empty:
-                    st.dataframe(extreme_results_full['grootste_range'].set_index('Datum'), use_container_width=True)
-                else:
-                    st.info("Geen data gevonden.")
+                display_extreme_results_by_station(
+                    extreme_results_full.get('grootste_range'), 
+                    "Grootste Dagelijkse Temperatuurbereik (Top 5 Range per station)", 
+                    "De Dagelijkse Range is het verschil tussen de Max Temp en de Min Temp op die dag (Grote schommelingen)."
+                )
