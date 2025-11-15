@@ -727,6 +727,109 @@ if not df_combined.empty:
         st.header("Vergelijking Weergrafieken")
         
         if selected_variables and not filtered_df.empty:
+            
+            # --- NIEUWE LOGICA: Overzicht en Kerncijfers ---
+            
+            # Stap 1: Bepaal de numerieke kolommen voor aggregatie (temperatuur en druk)
+            temp_cols = [col for col in ['temp', 'druk'] if col in filtered_df.columns]
+            
+            # Stap 2: Aggregeer de gefilterde ruwe data per station
+            if temp_cols:
+                 aggregation_dict = {
+                     'temp': ['mean', 'max', 'min'], # Bereken Gem, Max en Min voor Temp
+                     'druk': ['mean'] # Bereken Gemiddelde voor Druk
+                 }
+            
+                 # Bepaal de indices voor max/min temperatuur (om de datum te vinden)
+                 idx_max = filtered_df.groupby('Station Naam')['temp'].idxmax()
+                 idx_min = filtered_df.groupby('Station Naam')['temp'].idxmin()
+
+                 # Voer de aggregatie uit
+                 analysis_results = filtered_df.groupby('Station Naam').agg(
+                     avg_temp=('temp', 'mean'),
+                     max_temp=('temp', 'max'),
+                     min_temp=('temp', 'min'),
+                     avg_pres=('druk', 'mean'),
+                 ).reset_index()
+                 
+                 # Voeg de datums toe aan de resultaten (via merge op Station Naam)
+                 if not idx_max.empty and not idx_min.empty:
+                      df_max_date = filtered_df.loc[idx_max, ['Station Naam', 'Timestamp_Local']].rename(columns={'Timestamp_Local': 'max_temp_date'})
+                      df_min_date = filtered_df.loc[idx_min, ['Station Naam', 'Timestamp_Local']].rename(columns={'Timestamp_Local': 'min_temp_date'})
+                      
+                      analysis_results = pd.merge(analysis_results, df_max_date, on='Station Naam', how='left')
+                      analysis_results = pd.merge(analysis_results, df_min_date, on='Station Naam', how='left')
+                      
+                 # Weergave van de Kerncijfers
+                 st.subheader("Overzicht en Kerncijfers (Geselecteerde Periode)")
+
+                 for index, row in analysis_results.iterrows():
+                    station_name = row['Station Naam']
+                    
+                    # 💥 NIEUWE LOGICA: Laatste Waarneming voor dit station en deze periode
+                    df_station_filtered = filtered_df[filtered_df['Station Naam'] == station_name].sort_values('Timestamp_Local', ascending=False)
+                    
+                    last_temp = float('nan')
+                    last_time_str = "N/A"
+
+                    if not df_station_filtered.empty:
+                        last_record = df_station_filtered.iloc[0]
+                        last_temp = last_record['temp']
+                        last_time_str = last_record['Timestamp_Local'].strftime('%d-%m-%Y %H:%M')
+                    
+                    st.markdown(f"#### 🏷️ Station: **{station_name}**")
+                    # Gecorrigeerd naar 5 kolommen (col0 t/m col4)
+                    col0, col1, col2, col3, col4 = st.columns(5) 
+                    
+                    # Datum formatteer HULP:
+                    max_date_str = "N/A"
+                    if 'max_temp_date' in row and pd.notna(row['max_temp_date']):
+                         # FIX: Gebruik strftime direct op de pd.Timestamp-objecten
+                         max_date_str = row['max_temp_date'].strftime('%d-%m-%Y %H:%M')
+                    
+                    min_date_str = "N/A"
+                    if 'min_temp_date' in row and pd.notna(row['min_temp_date']):
+                         # FIX: Gebruik strftime direct op de pd.Timestamp-objecten
+                         min_date_str = row['min_temp_date'].strftime('%d-%m-%Y %H:%M')
+
+
+                    with col0:
+                        if pd.notna(last_temp):
+                            st.metric(
+                                label="Laatste Temp", 
+                                value=f"{last_temp:.1f} °C", 
+                                delta=f"Op: {last_time_str}"
+                            )
+                        else:
+                            st.metric(label="Laatste Temp", value="N/A")
+
+                    with col1:
+                        st.metric(label="Gemiddelde Temp", value=f"{row['avg_temp']:.1f} °C")
+
+                    with col2:
+                        st.metric(
+                            label="Hoogste Max Temp",
+                            value=f"{row['max_temp']:.1f} °C",
+                            delta=f"Op: {max_date_str}"
+                        )
+
+                    with col3:
+                        st.metric(
+                            label="Laagste Min Temp",
+                            value=f"{row['min_temp']:.1f} °C",
+                            delta=f"Op: {min_date_str}"
+                        )
+
+                    with col4:
+                        st.metric(label="Gemiddelde Luchtdruk", value=f"{row['avg_pres']:.2f} hPa")
+
+                    st.markdown("---")
+            else:
+                 st.info("Kerncijfers (temp/druk) zijn niet beschikbaar voor de geselecteerde variabele(n).")
+
+
+            # --- Grafiek Logica (onveranderd) ---
+            
             # selected_variables bevat nu maar één element [col_name]
             plot_df = filtered_df[['Timestamp_Local', 'Station Naam'] + selected_variables].rename(columns=COL_DISPLAY_MAP).melt(
                 ['Timestamp_Local', 'Station Naam'], 
@@ -925,39 +1028,77 @@ if not df_combined.empty:
 
         elif filter_mode == "Hellmann Getal Berekenen":
             
+            # 1. Hellmann-waarden per station berekenen
             df_hellmann_calc = df_filtered_condition.groupby('Station Naam').agg(
                 Hellmann_Value=('Temp_Avg_C', 'sum'),
                 Aantal_Vorstdagen=('Temp_Avg_C', 'size')
             ).reset_index()
 
+            # De Hellmann-waarde is de absolute som van de negatieve gemiddelde dagtemperaturen
             df_hellmann_calc['Hellmann_Value'] = abs(df_hellmann_calc['Hellmann_Value'])
-
-            st.subheader("Hellmann Getal Resultaat")
             
-            total_vorstdagen = df_hellmann_calc['Aantal_Vorstdagen'].sum()
-
-            if total_vorstdagen == 0:
-                st.info("Geen dagen met een negatieve gemiddelde temperatuur gevonden in de geselecteerde periode.")
+            # --- Resultaat: Tabel per station ---
+            
+            # We tonen de totale waarde NIET meer bovenaan.
+            st.subheader("Hellmann Waarden per Station")
+            
+            if df_hellmann_calc.empty or df_hellmann_calc['Aantal_Vorstdagen'].sum() == 0:
+                st.info("Geen dagen met een gemiddelde temperatuur $\\le$ 0.0 °C gevonden in de geselecteerde periode.")
             else:
-                
-                st.metric(
-                    label="Totaal Hellmann Getal over alle stations:",
-                    value=f"{df_hellmann_calc['Hellmann_Value'].sum():.1f}",
-                    delta=f"Totaal: {total_vorstdagen} vorstdagen"
-                )
-                
-                st.subheader("Hellmann Waarden per Station")
+                # Toon de samenvattingstabel per station
                 st.dataframe(df_hellmann_calc, use_container_width=True)
                 
-                st.subheader("Alle Vorstdagen (Tgem $\\le$ 0.0 °C)")
                 
-                df_display = df_filtered_condition.reset_index().rename(columns={'Date': 'Datum', 'Temp_Avg_C': 'Gem Temp (°C)', 'Temp_Low_C': 'Min Temp (°C)'})
+                st.markdown("---")
                 
-                # FIX: Gebruik safe_format_temp voor robuustheid
-                df_display['Vorstbijdrage'] = df_display['Gem Temp (°C)'].map(safe_format_temp)
-                df_display['Min Temp (°C)'] = df_display['Min Temp (°C)'].map(safe_format_temp)
+                # --- Resultaat: Gedetailleerde Vorstdagen per station ---
                 
-                st.dataframe(df_display.set_index('Datum')[['Station Naam', 'Min Temp (°C)', 'Gem Temp (°C)', 'Vorstbijdrage']], use_container_width=True)
+                st.subheader("Gedetailleerde Vorstdagen per Station (Tgem $\\le$ 0.0 °C)")
+
+                df_detail_display = df_filtered_condition.reset_index().rename(columns={
+                    'Date': 'Datum', 
+                    'Temp_Avg_C': 'Gem Temp (°C)', 
+                    'Temp_Low_C': 'Min Temp (°C)'
+                })
+                
+                # Bereid de kolommen voor op weergave
+                # De Vorstbijdrage is de absolute waarde van de negatieve Gemiddelde Temp
+                df_detail_display['Vorstbijdrage'] = df_detail_display['Gem Temp (°C)'] * (-1)
+                
+                # Formatteer de numerieke waarden
+                for col in ['Min Temp (°C)', 'Gem Temp (°C)']:
+                     df_detail_display[col] = df_detail_display[col].map(safe_format_temp)
+                
+                # Formatteer de Vorstbijdrage (met 3 decimalen voor precisie van de Hellmann-som)
+                df_detail_display['Vorstbijdrage'] = df_detail_display['Vorstbijdrage'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "")
+
+
+                # Lus over de stations en toon de detailtabel gescheiden
+                for station_name in df_detail_display['Station Naam'].unique():
+                    
+                    df_station_days = df_detail_display[df_detail_display['Station Naam'] == station_name].copy()
+                    
+                    # Haal de berekende Hellmann-waarde voor dit station op
+                    hellmann_data = df_hellmann_calc[df_hellmann_calc['Station Naam'] == station_name]
+                    if not hellmann_data.empty:
+                         hellmann_value = hellmann_data['Hellmann_Value'].iloc[0]
+                         vorst_dagen = hellmann_data['Aantal_Vorstdagen'].iloc[0]
+                    else:
+                         hellmann_value = 0.0
+                         vorst_dagen = 0
+                    
+                    st.markdown(f"#### ❄️ Station: **{station_name}**")
+                    st.metric(
+                         label=f"Totale Hellmann-waarde voor {station_name}:",
+                         value=f"{hellmann_value:.3f}",
+                         delta=f"Aantal Vorstdagen: {vorst_dagen}"
+                    )
+                    
+                    st.dataframe(
+                        df_station_days.set_index('Datum')[['Min Temp (°C)', 'Gem Temp (°C)', 'Vorstbijdrage']], 
+                        use_container_width=True
+                    )
+                    st.markdown("---")
 
 
     # -------------------------------------------------------------------
