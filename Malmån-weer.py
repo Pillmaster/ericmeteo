@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import datetime
-import re # Importeer de regex module
+import re 
 
 # 1. Configuratie en constanten (Constants and Configuration)
 
@@ -136,7 +136,7 @@ def get_unit_from_display_name(display_name, plot_col):
     """
     if plot_col in ['temp', 'dauwpunt', 'natbol']:
         # Voor temperaturen voegen we zelf '°C' toe, dus return lege string
-        return "" 
+        return "°C" # Return °C zodat we het overal kunnen gebruiken voor metrics
     # Zoek naar tekst tussen haken (bijv. 'hPa' in 'Luchtdruk (hPa)')
     unit_match = re.search(r'\((.*?)\)', display_name)
     if unit_match:
@@ -351,6 +351,7 @@ info_placeholder_years = None
 info_placeholder_last_check = None
 
 # 💥 Sectie 1: Data Basis (Stations & Jaren)
+# STANDAARD OPEN: Meest essentiële keuze
 with st.sidebar.expander("🛠️ Data Basis (Stations & Jaren)", expanded=True):
     st.header("Stations & Jaren")
 
@@ -362,12 +363,12 @@ with st.sidebar.expander("🛠️ Data Basis (Stations & Jaren)", expanded=True)
         format_func=lambda x: STATION_MAP[x]
     )
 
-# 💥 Sectie 2: Grafiek Variabelen (Wordt later gedefinieerd)
-# 💥 Sectie 3: Tijdsselectie (Wordt later gedefinieerd)
+# 💥 Sectie 2 & 3: Grafiek Opties (Variabelen & Tijd) - GECONSOLIDEERD
 # 💥 Sectie 4: Historische Zoekfilters (Wordt later gedefinieerd)
-# 💥 NIEUW: Sectie 5: Maand/Jaar Filters (Wordt later gedefinieerd)
+# 💥 Sectie 5: Maand/Jaar Filters (Wordt later gedefinieerd)
 
 # 💥 Sectie 6: Programma Checks (Status en Herlaadknop verplaatst HIER)
+# STANDAARD GESLOTEN: Minder vaak nodig
 with st.sidebar.expander("⚙️ Programma Checks", expanded=False):
     st.header("Systeem Status & Controles")
     
@@ -482,9 +483,11 @@ if not df_combined.empty:
 # Controleer of er data is geladen
 if not df_combined.empty:
     
-    # 💥 Sectie 2: Grafiek Variabelen
-    with st.sidebar.expander("📈 Grafiek Variabelen", expanded=False):
-        st.header("Grafiek Opties")
+    # 💥 Sectie 2 & 3: Grafiek Opties (Variabelen & Tijd) - GECONSOLIDEERD
+    with st.sidebar.expander("📈 Grafiek Opties (Variabele & Tijd)", expanded=True):
+        
+        # --- 2. Grafiek Variabelen ---
+        st.header("Grafiek Variabelen")
 
         plot_options = [COL_DISPLAY_MAP[col] for col in NUMERIC_COLS if col in df_combined.columns]
         
@@ -494,7 +497,6 @@ if not df_combined.empty:
         if temp_display_name in plot_options:
             default_selection = [temp_display_name]
             
-        # --- AANPASSING HIER: st.multiselect vervangen door st.selectbox ---
         if default_selection:
              default_index = plot_options.index(default_selection[0])
         else:
@@ -507,15 +509,23 @@ if not df_combined.empty:
             key='variable_select_' + '_'.join(selected_station_ids) 
         )
         
-        # selected_variables is nu een lijst met slechts één element
         selected_variables = [DISPLAY_TO_COL_MAP[selected_variable_display]]
         
         st.markdown(f"**Geselecteerde variabele:** `{selected_variable_display}`")
 
-
-    # 💥 Sectie 3: Tijdsselectie (Live/Recent Data)
-    with st.sidebar.expander("⏱️ Tijdsbereik (Grafiek/Ruwe Data)", expanded=False):
-        st.header("Tijdsselectie")
+        # <<< VERPLAATSTE CHECKBOX: Toon Datapunten (onderaan Variabele selectie) >>>
+        show_markers = st.checkbox(
+            "Toon Datapunten", 
+            key="show_markers",
+            on_change=lambda: set_active_tab(0)
+        )
+        # <<< EINDE VERPLAATSTE CHECKBOX >>>
+        
+        # --- Scheiding tussen Variabele en Tijd ---
+        st.markdown("---")
+        
+        # --- 3. Tijdsselectie (Live/Recent Data) ---
+        st.header("Tijdsbereik (Grafiek & Ruwe Data)")
         
         time_range_options = [
             "Huidige dag (sinds 00:00 uur)",
@@ -525,7 +535,6 @@ if not df_combined.empty:
             "Vrije selectie op datum"
         ]
 
-        # TOEVOEGEN: on_change om naar Tab 1 te schakelen
         selected_range_option = st.selectbox(
             "Kies een tijdsbereik voor Grafiek/Ruwe Data:",
             options=time_range_options,
@@ -554,7 +563,6 @@ if not df_combined.empty:
             
         elif selected_range_option == "Vrije selectie op datum":
             
-            # TOEVOEGEN: on_change om naar Tab 1 te schakelen
             custom_date_range = st.date_input(
                 "Kies start- en einddatum:",
                 value=[max_date_available, max_date_available], 
@@ -603,6 +611,7 @@ if not df_combined.empty:
             
     
     # 💥 Sectie 4: Historische Zoekfilters
+    # STANDAARD GESLOTEN: Minder essentiële filtering
     with st.sidebar.expander("❄️ Historische Zoekfilters", expanded=False):
         
         st.markdown(f"**1. Zoekperiode**")
@@ -753,7 +762,8 @@ if not df_combined.empty:
             )
             
     # 💥 Sectie 5: Maand/Jaar Filters (AANGEPAST: onnodige optie verwijderd)
-    with st.sidebar.expander("⚙️ Maand/Jaar Filters", expanded=True):
+    # STANDAARD GESLOTEN: Minder essentiële filtering
+    with st.sidebar.expander("⚙️ Maand/Jaar Filters", expanded=False):
         st.header("Analyse Periode")
 
         # TOEVOEGEN: on_change om naar Tab 4 te schakelen
@@ -805,10 +815,6 @@ if not df_combined.empty:
             # Verwijder de tijdelijke kolommen 
             df_analysis_selector = df_analysis_selector.drop(columns=[c for c in ['JaarMaand', 'Jaar'] if c in df_analysis_selector.columns])
         
-        # st.markdown("---") # VERWIJDERD
-        # st.markdown(f"**Opties:**") # VERWIJDERD
-        # De checkbox voor de boxplot is hier ook verwijderd in de vorige stap.
-
 # --- Hoofdsectie met Tabs (AANGEPAST VOOR PROGRAMMATISCHE CONTROLE) ---
 if df_combined.empty:
     st.warning("Geen weerdata geladen. Selecteer stations in de zijbalk.")
@@ -862,83 +868,96 @@ else:
         
         if not filtered_df.empty:
             
-            # --- Nieuwe Samenvattingssectie: Kernwaarden ---
+            # --- Nieuwe Samenvattingssectie: Kernwaarden (GEBRUIK ST.METRIC) ---
             st.markdown("---")
             st.subheader("📊 Kernwaarden van de Geselecteerde Periode")
             
-            summary_data = []
             plot_col = selected_variables[0] 
             y_axis_title = selected_variable_display
             
-            # Haal de eenheid op met de nieuwe functie
+            # Haal de eenheid op met de nieuwe functie (nu inclusief °C voor temperatuur)
             unit = get_unit_from_display_name(y_axis_title, plot_col)
 
-            # Functie om de waarden te formatteren
-            def format_value_summary(val):
+            # Functie om de waarden te formatteren (ZONDER tijdstip)
+            def format_value_metric(val):
                 if pd.isna(val):
                     return "N/A"
-                if plot_col in ['temp', 'dauwpunt', 'natbol']:
-                    # Formatteer temperaturen met 1 decimaal en °C
-                    return f"{val:.1f} °C" 
-                else:
-                    # Formatteer andere waarden met 1 decimaal en de unit
-                    return f"{val:.1f} {unit}"
-                
+                # Gebruik altijd 1 decimaal voor consistentie in metrics
+                return f"{val:.1f} {unit}"
+            
+            # Groeperen en tonen per station
             for station_name, group in filtered_df.groupby('Station Naam'):
                 
-                # 1. Bereken Max, Gemiddelde en Min van de geselecteerde variabele
+                st.markdown(f"##### 📌 Station: **{station_name}**")
+
+                # 1. Berekening van de kernwaarden
                 max_val = group[plot_col].max()
                 avg_val = group[plot_col].mean()
                 min_val = group[plot_col].min()
 
-                # --- AANGEPAST: Vind de tijdstippen voor Min en Max ---
-                
-                # Max: vind de rij met de max_val, sorteer aflopend op tijd (meest recent van gelijke waarden)
-                max_row = group[group[plot_col] == max_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
-                max_time = max_row['Timestamp_Local'].strftime('%H:%M')
-                max_display = f"{format_value_summary(max_val)} ({max_time})"
-
-                # Min: vind de rij met de min_val, sorteer aflopend op tijd (meest recent van gelijke waarden)
-                min_row = group[group[plot_col] == min_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
-                min_time = min_row['Timestamp_Local'].strftime('%H:%M')
-                min_display = f"{format_value_summary(min_val)} ({min_time})"
-
-                # Laatste Meetwaarde: Sorteer en gebruik de eerste rij (meest recente)
                 last_row = group.sort_values('Timestamp_Local', ascending=False).iloc[0]
                 last_val = last_row[plot_col]
-                # Gebruik ook hier het compacte HH:MM formaat
                 last_time = last_row['Timestamp_Local'].strftime('%H:%M') 
-                last_display = f"{format_value_summary(last_val)} ({last_time})"
-                # --- EINDE AANGEPAST ---
+                
+                # 2. Bepaal de delta voor de 'Laatste Waarde' (vergelijking met Gemiddelde)
+                last_delta_val_str = None
+                if not pd.isna(last_val) and not pd.isna(avg_val):
+                     delta_raw = last_val - avg_val
+                     
+                     # Formatteer de delta string (met eenheid en 1 decimaal)
+                     if delta_raw > 0:
+                         last_delta_val_str = f"+{delta_raw:.1f} {unit}"
+                     elif delta_raw < 0:
+                          last_delta_val_str = f"{delta_raw:.1f} {unit}"
+                     else:
+                          last_delta_val_str = "0.0 " + unit
 
-                # De veldnamen in de gevraagde volgorde: Laatste, Min, Gem, Max
-                summary_data.append({
-                    'Station Naam': station_name,
-                    'Laatste Meetwaarde': last_display,                                          # 1. Laatste
-                    f'Min {y_axis_title}': min_display,                                          # 2. Min (met tijdstip)
-                    f'Gem. {y_axis_title}': format_value_summary(avg_val),                       # 3. Gemiddelde (zonder tijdstip)
-                    f'Max {y_axis_title}': max_display,                                          # 4. Max (met tijdstip)
-                })
+                
+                # 3. Toon de metrics in kolommen
+                col_last, col_min, col_avg, col_max = st.columns(4)
 
-            df_summary = pd.DataFrame(summary_data)
-            
-            # Definieer de kolomvolgorde
-            cols_order = [
-                'Station Naam',
-                'Laatste Meetwaarde',
-                f'Min {y_axis_title}',
-                f'Gem. {y_axis_title}',
-                f'Max {y_axis_title}'
-            ]
-            
-            # Toon de dataframe met de juiste volgorde
-            st.dataframe(df_summary[cols_order].set_index('Station Naam'), use_container_width=True)
+                with col_last:
+                    st.metric(
+                        label=f"Laatste ({last_time})", 
+                        value=format_value_metric(last_val),
+                        delta=f"vs. Gem: {last_delta_val_str}" if last_delta_val_str else None,
+                        delta_color="normal" # Standaard kleur om +/- te tonen
+                    )
+                with col_min:
+                    # Zoek de tijd voor de tooltip
+                    min_row = group[group[plot_col] == min_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
+                    min_time = min_row['Timestamp_Local'].strftime('%H:%M')
+                    st.metric(
+                        label=f"Minimale ({min_time})", 
+                        value=format_value_metric(min_val),
+                        # Geen delta hier
+                    )
+                with col_avg:
+                    st.metric(
+                        label="Gemiddelde", 
+                        value=format_value_metric(avg_val),
+                        # Geen delta hier
+                    )
+                with col_max:
+                    # Zoek de tijd voor de tooltip
+                    max_row = group[group[plot_col] == max_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
+                    max_time = max_row['Timestamp_Local'].strftime('%H:%M')
+                    st.metric(
+                        label=f"Maximale ({max_time})", 
+                        value=format_value_metric(max_val),
+                        # Geen delta hier
+                    )
+                st.markdown("---") 
+            # --- Einde st.metric Sectie ---
             
             st.markdown("---") 
-            # --- Einde Samenvattingssectie ---
             
             plot_col = selected_variables[0] 
             y_axis_title = selected_variable_display
+            
+            # --- SUGGESTIE A: Bepaal trace mode ---
+            trace_mode = 'lines+markers' if st.session_state.get('show_markers') else 'lines'
+            # ---------------------------------------
 
             fig = px.line(
                 filtered_df,
@@ -951,13 +970,32 @@ else:
                 height=600
             )
 
-            fig.update_traces(mode='lines', hoverinfo='x+y+name')
+            # --- SUGGESTIE B: Custom Tooltip Template & Hovermode ---
+            # Dit template wordt gebruikt in combinatie met hovermode="x unified"
+            trace_hovertemplate_tab1 = (
+                f"<b>{y_axis_title}:</b> %{{y:.1f}} {unit}<br>" +
+                "<b>Station:</b> %{full_data.name}<extra></extra>" # <extra></extra> verwijdert de standaard 'trace' naam
+            )
+            
+            fig.update_traces(
+                mode=trace_mode, 
+                hovertemplate=trace_hovertemplate_tab1
+            ) 
+            
             fig.update_layout(
                 hovermode="x unified",
                 xaxis_title=f'Tijdstip ({TARGET_TIMEZONE})',
                 yaxis_title=y_axis_title,
                 legend_title_text='Station',
             )
+
+            # Pas de hoverformat aan voor de X-as (Datum/Tijd)
+            fig.update_xaxes(
+                 title=f'Tijdstip ({TARGET_TIMEZONE})',
+                 hoverformat="%d-%m-%Y %H:%M",
+                 tickformat="%H:%M\n%d-%m" # Voor leesbare as labels
+            )
+            # -------------------------------------------------------------
 
             st.plotly_chart(fig, use_container_width=True)
             
@@ -996,9 +1034,14 @@ else:
 
             if filter_mode == "Hellmann Getal Berekenen":
                 
-                st.subheader(f"Hellmann Getal Berekening voor {period_type} periode")
-                st.info(f"Periode: **{df_filtered_time.index.min().strftime('%d-%m-%Y')}** tot **{df_filtered_time.index.max().strftime('%d-%m-%Y')}**")
+                # --- VISUELE OPSCHONING 1: Subheader met emoji & beknoptere info box ---
+                st.subheader(f"❄️ Hellmann Getal Berekening")
+                start_date = df_filtered_time.index.min().strftime('%d-%m-%Y')
+                end_date = df_filtered_time.index.max().strftime('%d-%m-%Y')
                 
+                st.info(f"**Analyse Periode:** {period_type} van **{start_date}** tot **{end_date}**.")
+                # ---------------------------------------------------------------------
+
                 # Filter voor dagen met Temp_Avg_C <= 0.0
                 df_hellmann_days = filtered_data[filtered_data['Temp_Avg_C'] <= 0.0].copy()
                 
@@ -1012,11 +1055,14 @@ else:
                     ).reset_index()
                     
                     # Formatteer voor weergave
-                    hellmann_results['Hellmann_Getal'] = hellmann_results['Hellmann_Getal'].astype(str) + " °C"
+                    hellmann_results['Hellmann Getal'] = hellmann_results['Hellmann_Getal'].astype(str) + " °C"
                     hellmann_results = hellmann_results.rename(columns={
                         'Aantal_Dagen_Koude': 'Aantal Dagen (≤ 0.0 °C)',
-                        'Hellmann_Getal': 'Hellmann Getal'
-                    }).set_index('Station Naam')
+                    }).set_index('Station Naam').drop(columns=['Hellmann_Getal'])
+                    
+                    # --- GEWENSTE WIJZIGING 2: Kolomvolgorde Hellmann ---
+                    hellmann_results = hellmann_results[['Hellmann Getal', 'Aantal Dagen (≤ 0.0 °C)']]
+                    # ---------------------------------------------------
                     
                     st.success("Hellmann Getal is de absolute som van de Gemiddelde Dagtemperatuur (alleen als de temperatuur $\\le 0.0$ °C is).")
                     st.dataframe(hellmann_results, use_container_width=True)
@@ -1042,9 +1088,22 @@ else:
 
             elif filter_mode == "Aaneengesloten Periode":
                 
-                st.subheader(f"Zoekresultaten: Aaneengesloten Periodes van {min_consecutive_days}+ dagen")
-                st.info(f"Filter: **{temp_column}** {comparison} **{temp_threshold}°C** in de periode van **{df_filtered_time.index.min().strftime('%d-%m-%Y')}** tot **{df_filtered_time.index.max().strftime('%d-%m-%Y')}**")
+                # Haal display-waarden op uit session state
+                display_temp_type = st.session_state.get('temp_type_period', 'Gemiddelde Temp (Temp_Avg_C)').split(" (")[0]
+                comparison_char = "≥" if comparison == "Hoger dan (>=)" else "≤"
+                start_date = df_filtered_time.index.min().strftime('%d-%m-%Y')
+                end_date = df_filtered_time.index.max().strftime('%d-%m-%Y')
                 
+                # --- VISUELE OPSCHONING 1: Subheader met emoji & beknoptere info box ---
+                st.subheader(f"🔥 Zoekresultaten: Aaneengesloten Periodes van **{min_consecutive_days}**+ dagen")
+                
+                st.info(f"""
+                **Criteria:** {min_consecutive_days}+ aaneengesloten dagen waarbij **{display_temp_type}** {comparison_char} **{temp_threshold}°C**
+                
+                📆 **Geselecteerde Periode:** {start_date} tot {end_date}
+                """)
+                # ---------------------------------------------------------------------
+
                 # Filter de data (boolean mask)
                 if comparison == "Hoger dan (>=)":
                     df_filtered_period = filtered_data[filtered_data[temp_column] >= temp_threshold]
@@ -1067,8 +1126,21 @@ else:
 
             else: # Losse Dagen
                 
-                st.subheader(f"Zoekresultaten: Losse Dagen")
-                st.info(f"Filter: **{temp_column}** {comparison} **{temp_threshold}°C** in de periode van **{df_filtered_time.index.min().strftime('%d-%m-%Y')}** tot **{df_filtered_time.index.max().strftime('%d-%m-%Y')}**")
+                # Haal display-waarden op uit session state
+                display_temp_type = st.session_state.get('temp_type_days', 'Gemiddelde Temp (Temp_Avg_C)').split(" (")[0]
+                comparison_char = "≥" if comparison == "Hoger dan (>=)" else "≤"
+                start_date = df_filtered_time.index.min().strftime('%d-%m-%Y')
+                end_date = df_filtered_time.index.max().strftime('%d-%m-%Y')
+                
+                # --- VISUELE OPSCHONING 1: Subheader met emoji & beknoptere info box ---
+                st.subheader(f"🔍 Zoekresultaten: Losse Dagen")
+                
+                st.info(f"""
+                **Criteria:** Dagen waarbij **{display_temp_type}** {comparison_char} **{temp_threshold}°C**
+                
+                📆 **Geselecteerde Periode:** {start_date} tot {end_date}
+                """)
+                # ---------------------------------------------------------------------
                 
                 # Filter de data (boolean mask)
                 if comparison == "Hoger dan (>=)":
@@ -1165,16 +1237,33 @@ else:
                 line_dash='Station Naam', # Use line dash for different stations
                 title=f'Dagelijkse Min, Max en Gemiddelde Temperatuur in {selected_period_str}',
                 labels={'Date': 'Datum', 'Temperatuur (°C)': 'Temperatuur (°C)'},
-                height=600
+                height=600,
+                custom_data=['Station Naam', 'Temperatuur Type'] # Nodig voor custom tooltip
+            )
+            
+            # --- SUGGESTIE B: Custom Tooltip Template (Dagelijkse data) ---
+            trace_hovertemplate_tab4 = (
+                "<b>Datum:</b> %{x|%d-%m-%Y}<br>" +
+                "<b>%{{customdata[1]}} Temp:</b> %{{y:.1f}} °C<br>" + # %{customdata[1]} is Temp Type (Max/Min/Gemiddeld)
+                "<b>Station:</b> %{customdata[0]}<extra></extra>"
+            )
+
+            fig_daily.update_traces(
+                mode='lines',
+                hovertemplate=trace_hovertemplate_tab4
             )
             
             fig_daily.update_layout(hovermode="x unified")
+            
+            # Pas de hoverformat aan voor de X-as (Datum)
+            fig_daily.update_xaxes(
+                 title='Datum',
+                 hoverformat="%d-%m-%Y"
+            )
+            # -------------------------------------------------------------
+
             st.plotly_chart(fig_daily, use_container_width=True)
 
-            # --- Oude Info Box (VERWIJDERD) ---
-            # st.markdown("---")
-            # st.info("De Boxplot is verwijderd. De dagelijkse lijngrafiek toont Max, Min en Gemiddelde temperatuur.")
-            # --- EINDE Oude Info Box ---
                 
     elif active_tab_index == 4: # --- Tab 5: Extremen ---
         
