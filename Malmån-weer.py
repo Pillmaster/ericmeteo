@@ -7,6 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import datetime
+import re # Importeer de regex module
 
 # 1. Configuratie en constanten (Constants and Configuration)
 
@@ -127,6 +128,21 @@ def safe_format_temp(x):
     except (ValueError, TypeError):
         # Vang op als x een onverwacht type is dat niet naar float kan
         return "" 
+        
+# NIEUWE FUNCTIE: Haalt de eenheid uit de display-naam
+def get_unit_from_display_name(display_name, plot_col):
+    """
+    Haalt de eenheid uit de display naam voor formatting.
+    """
+    if plot_col in ['temp', 'dauwpunt', 'natbol']:
+        # Voor temperaturen voegen we zelf '°C' toe, dus return lege string
+        return "" 
+    # Zoek naar tekst tussen haken (bijv. 'hPa' in 'Luchtdruk (hPa)')
+    unit_match = re.search(r'\((.*?)\)', display_name)
+    if unit_match:
+        return unit_match.group(1).strip()
+    # Als er geen haken zijn, probeer het laatste woord
+    return display_name.split(' ')[-1].strip()
 
 
 def find_consecutive_periods(df_filtered, min_days, temp_column):
@@ -846,6 +862,81 @@ else:
         
         if not filtered_df.empty:
             
+            # --- Nieuwe Samenvattingssectie: Kernwaarden ---
+            st.markdown("---")
+            st.subheader("📊 Kernwaarden van de Geselecteerde Periode")
+            
+            summary_data = []
+            plot_col = selected_variables[0] 
+            y_axis_title = selected_variable_display
+            
+            # Haal de eenheid op met de nieuwe functie
+            unit = get_unit_from_display_name(y_axis_title, plot_col)
+
+            # Functie om de waarden te formatteren
+            def format_value_summary(val):
+                if pd.isna(val):
+                    return "N/A"
+                if plot_col in ['temp', 'dauwpunt', 'natbol']:
+                    # Formatteer temperaturen met 1 decimaal en °C
+                    return f"{val:.1f} °C" 
+                else:
+                    # Formatteer andere waarden met 1 decimaal en de unit
+                    return f"{val:.1f} {unit}"
+                
+            for station_name, group in filtered_df.groupby('Station Naam'):
+                
+                # 1. Bereken Max, Gemiddelde en Min van de geselecteerde variabele
+                max_val = group[plot_col].max()
+                avg_val = group[plot_col].mean()
+                min_val = group[plot_col].min()
+
+                # --- AANGEPAST: Vind de tijdstippen voor Min en Max ---
+                
+                # Max: vind de rij met de max_val, sorteer aflopend op tijd (meest recent van gelijke waarden)
+                max_row = group[group[plot_col] == max_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
+                max_time = max_row['Timestamp_Local'].strftime('%H:%M')
+                max_display = f"{format_value_summary(max_val)} ({max_time})"
+
+                # Min: vind de rij met de min_val, sorteer aflopend op tijd (meest recent van gelijke waarden)
+                min_row = group[group[plot_col] == min_val].sort_values('Timestamp_Local', ascending=False).iloc[0]
+                min_time = min_row['Timestamp_Local'].strftime('%H:%M')
+                min_display = f"{format_value_summary(min_val)} ({min_time})"
+
+                # Laatste Meetwaarde: Sorteer en gebruik de eerste rij (meest recente)
+                last_row = group.sort_values('Timestamp_Local', ascending=False).iloc[0]
+                last_val = last_row[plot_col]
+                # Gebruik ook hier het compacte HH:MM formaat
+                last_time = last_row['Timestamp_Local'].strftime('%H:%M') 
+                last_display = f"{format_value_summary(last_val)} ({last_time})"
+                # --- EINDE AANGEPAST ---
+
+                # De veldnamen in de gevraagde volgorde: Laatste, Min, Gem, Max
+                summary_data.append({
+                    'Station Naam': station_name,
+                    'Laatste Meetwaarde': last_display,                                          # 1. Laatste
+                    f'Min {y_axis_title}': min_display,                                          # 2. Min (met tijdstip)
+                    f'Gem. {y_axis_title}': format_value_summary(avg_val),                       # 3. Gemiddelde (zonder tijdstip)
+                    f'Max {y_axis_title}': max_display,                                          # 4. Max (met tijdstip)
+                })
+
+            df_summary = pd.DataFrame(summary_data)
+            
+            # Definieer de kolomvolgorde
+            cols_order = [
+                'Station Naam',
+                'Laatste Meetwaarde',
+                f'Min {y_axis_title}',
+                f'Gem. {y_axis_title}',
+                f'Max {y_axis_title}'
+            ]
+            
+            # Toon de dataframe met de juiste volgorde
+            st.dataframe(df_summary[cols_order].set_index('Station Naam'), use_container_width=True)
+            
+            st.markdown("---") 
+            # --- Einde Samenvattingssectie ---
+            
             plot_col = selected_variables[0] 
             y_axis_title = selected_variable_display
 
@@ -1080,8 +1171,10 @@ else:
             fig_daily.update_layout(hovermode="x unified")
             st.plotly_chart(fig_daily, use_container_width=True)
 
-            st.markdown("---")
-            st.info("De Boxplot is verwijderd. De dagelijkse lijngrafiek toont Max, Min en Gemiddelde temperatuur.")
+            # --- Oude Info Box (VERWIJDERD) ---
+            # st.markdown("---")
+            # st.info("De Boxplot is verwijderd. De dagelijkse lijngrafiek toont Max, Min en Gemiddelde temperatuur.")
+            # --- EINDE Oude Info Box ---
                 
     elif active_tab_index == 4: # --- Tab 5: Extremen ---
         
