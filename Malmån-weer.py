@@ -353,7 +353,7 @@ info_placeholder_last_check = None
 # 💥 Sectie 1: Data Basis (Stations & Jaren)
 # STANDAARD OPEN: Meest essentiële keuze
 with st.sidebar.expander("🛠️ Data Basis (Stations & Jaren)", expanded=True):
-    st.header("Stations & Jaren")
+    # st.header("Stations & Jaren") # VERWIJDERD VOOR COMPACTHEID
 
     station_options = list(STATION_MAP.keys())
     selected_station_ids = st.multiselect(
@@ -487,8 +487,8 @@ if not df_combined.empty:
     with st.sidebar.expander("📈 Grafiek Opties (Variabele & Tijd)", expanded=True):
         
         # --- 2. Grafiek Variabelen ---
-        st.header("Grafiek Variabelen")
-
+        st.markdown("**1. Grafiek Variabele**") # Compacte titel
+        
         plot_options = [COL_DISPLAY_MAP[col] for col in NUMERIC_COLS if col in df_combined.columns]
         
         default_selection = []
@@ -506,26 +506,17 @@ if not df_combined.empty:
             "Kies de variabele voor de grafiek:",
             options=plot_options,
             index=default_index, 
-            key='variable_select_' + '_'.join(selected_station_ids) 
+            key='variable_select_' + '_'.join(selected_station_ids),
+            # label_visibility="collapsed" # Houden we voor de leesbaarheid als 'Kies de variabele'
         )
         
         selected_variables = [DISPLAY_TO_COL_MAP[selected_variable_display]]
-        
-        st.markdown(f"**Geselecteerde variabele:** `{selected_variable_display}`")
-
-        # <<< VERPLAATSTE CHECKBOX: Toon Datapunten (onderaan Variabele selectie) >>>
-        show_markers = st.checkbox(
-            "Toon Datapunten", 
-            key="show_markers",
-            on_change=lambda: set_active_tab(0)
-        )
-        # <<< EINDE VERPLAATSTE CHECKBOX >>>
         
         # --- Scheiding tussen Variabele en Tijd ---
         st.markdown("---")
         
         # --- 3. Tijdsselectie (Live/Recent Data) ---
-        st.header("Tijdsbereik (Grafiek & Ruwe Data)")
+        st.markdown("**2. Tijdsbereik**") # Compacte titel
         
         time_range_options = [
             "Huidige dag (sinds 00:00 uur)",
@@ -541,6 +532,15 @@ if not df_combined.empty:
             index=0,
             on_change=lambda: set_active_tab(0) # Spring naar Grafiek tab (index 0)
         )
+        
+        # <<< NIEUWE POSITIE: Toon Datapunten (NA Tijdselectie) >>>
+        # st.markdown("---") # VERWIJDERD VOOR COMPACTHEID
+        show_markers = st.checkbox(
+            "Toon Datapunten (Markers)", 
+            key="show_markers",
+            on_change=lambda: set_active_tab(0)
+        )
+        # <<< EINDE NIEUWE POSITIE >>>
 
         now_local = pd.Timestamp.now(tz=TARGET_TIMEZONE)
         min_date_available = df_combined['Timestamp_Local'].min().date()
@@ -563,6 +563,7 @@ if not df_combined.empty:
             
         elif selected_range_option == "Vrije selectie op datum":
             
+            # De date_input zelf is al compact.
             custom_date_range = st.date_input(
                 "Kies start- en einddatum:",
                 value=[max_date_available, max_date_available], 
@@ -764,7 +765,7 @@ if not df_combined.empty:
     # 💥 Sectie 5: Maand/Jaar Filters (AANGEPAST: onnodige optie verwijderd)
     # STANDAARD GESLOTEN: Minder essentiële filtering
     with st.sidebar.expander("⚙️ Maand/Jaar Filters", expanded=False):
-        st.header("Analyse Periode")
+        # st.header("Analyse Periode") # VERWIJDERD VOOR COMPACTHEID
 
         # TOEVOEGEN: on_change om naar Tab 4 te schakelen
         analysis_type = st.radio(
@@ -821,13 +822,6 @@ if df_combined.empty:
 else:
     
     tab_titles_full = ["📈 Grafiek", "📊 Ruwe Data", "🔍 Historische Zoeker", "⭐ Maand/Jaar Analyse", "🏆 Extremen"]
-    
-    # ------------------------------------------------------------------------------------
-    # OPLOSSING VOOR PROGRAMMATISCHE TAB-SWITCHING:
-    # 1. Gebruik st.selectbox (of st.radio) voor navigatie, omdat deze programmatisch te bedienen is via de index.
-    # 2. De index wordt ingesteld door de sidebar callbacks (st.session_state.active_tab_index).
-    # 3. Rendereer de content conditioneel op basis van de actieve index.
-    # ------------------------------------------------------------------------------------
     
     # Hulpfunctie om de actieve index in Session State bij te werken bij handmatige klik op de selectbox
     def update_active_index_on_manual_select():
