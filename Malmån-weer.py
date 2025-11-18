@@ -27,7 +27,7 @@ TARGET_TIMEZONE = 'Europe/Stockholm'
 
 # Mapping van Stations-ID naar gebruiksvriendelijke namen
 STATION_MAP = {
-    '2308LH047': 'Malmån hus',
+    '2308LH047': 'Malmån huset',
     '2102LH011': 'Malmån sjön'
 }
 
