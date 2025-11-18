@@ -599,8 +599,8 @@ if not df_combined.empty:
         Temp_High_C=('temp', 'max'),
         Temp_Low_C=('temp', 'min'),
         Temp_Avg_C=('temp', 'mean'),
-        Pres_Avg_hPa=('druk', 'mean'), 
-        Hum_Avg_P=('luchtvocht', 'mean'), 
+        Pres_Avg_hPa=('druk', 'mean'), # Kolomnaam die gebruikt MOET worden in Tab 4
+        Hum_Avg_P=('luchtvocht', 'mean'), # Kolomnaam die gebruikt MOET worden in Tab 4
     ).dropna(subset=['Temp_Avg_C']).reset_index()
 
     df_daily_summary = df_daily_summary.rename(columns={'Timestamp_Local': 'Date'}).set_index('Date')
@@ -1080,13 +1080,16 @@ else:
             st.subheader(f"Overzicht per Station voor **{selected_period_str_analysis}**")
             
             # --- Samenvattende Tabel ---
+            
+            # Oplossing voor KeyError: 'druk' en 'luchtvocht' zijn hernoemd in df_daily_summary
             df_summary_stats = df_analysis_selector.groupby('Station Naam').agg(
                 Dagen=('Temp_Avg_C', 'size'),
                 Max_Temp_Abs=('Temp_High_C', 'max'),
                 Min_Temp_Abs=('Temp_Low_C', 'min'),
                 Avg_Temp=('Temp_Avg_C', 'mean'),
-                Avg_Druk=('druk', 'mean'),
-                Avg_Vocht=('luchtvocht', 'mean'),
+                # VASTE LIJN: Gebruik de correcte kolomnamen uit df_daily_summary
+                Avg_Druk=('Pres_Avg_hPa', 'mean'), # Was foutief: 'druk'
+                Avg_Vocht=('Hum_Avg_P', 'mean'), # Was foutief: 'luchtvocht'
             )
             
             df_summary_stats_display = df_summary_stats.rename(columns={
