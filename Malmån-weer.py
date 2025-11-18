@@ -48,8 +48,8 @@ DISPLAY_TO_COL_MAP = {display_name: col_name for col_name, display_name in COL_D
 
 # 2. Functies voor Data (Loading & Processing)
 
-# Zoekt naar beschikbare jaren op GitHub (Gecached, NU ZONDER TTL VOOR ACTUEELHEID)
-@st.cache_data(show_spinner="Zoeken naar beschikbare jaren op GitHub...")
+# >> AANPASSING HIER: ttl=300 (5 minuten) toegevoegd voor automatische herlading <<
+@st.cache_data(show_spinner="Zoeken naar beschikbare jaren op GitHub...", ttl=300) 
 def discover_available_years(start_year, station_id, github_base_url):
     """
     Probeert iteratief om weather_YYYY.csv te laden van het startjaar tot het huidige jaar.
@@ -75,8 +75,8 @@ def discover_available_years(start_year, station_id, github_base_url):
     return sorted(available_years)
 
 
-# Bestaande Laadfunctie (caching behouden voor performantie)
-@st.cache_data
+# >> AANPASSING HIER: ttl=300 (5 minuten) toegevoegd voor automatische herlading <<
+@st.cache_data(ttl=300)
 def load_data(station_id, years, github_base_url, station_map, target_timezone):
     """
     Laadt, parseert en pre-verwerkt weerdata van GitHub voor meerdere jaren.
