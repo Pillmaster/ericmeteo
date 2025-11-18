@@ -48,7 +48,7 @@ DISPLAY_TO_COL_MAP = {display_name: col_name for col_name, display_name in COL_D
 
 # 2. Functies voor Data (Loading & Processing)
 
-# >> AANPASSING HIER: ttl=300 (5 minuten) toegevoegd voor automatische herlading <<
+# >> AANPASSING 1: ttl=300 (5 minuten) en Cache Buster <<
 @st.cache_data(show_spinner="Zoeken naar beschikbare jaren op GitHub...", ttl=300) 
 def discover_available_years(start_year, station_id, github_base_url):
     """
@@ -57,9 +57,12 @@ def discover_available_years(start_year, station_id, github_base_url):
     current_year = datetime.datetime.now().year
     available_years = []
     
+    # Cache Buster: Gebruik de huidige tijd (deze verandert elke keer dat de functie daadwerkelijk draait)
+    cache_buster = datetime.datetime.now().strftime("%Y%m%d%H%M%S") 
+    
     for year in range(start_year, current_year + 1):
-        # Gebruik f-string voor URL in plaats van os.path.join
-        full_url = f"{github_base_url}{station_id}/weather_{year}.csv"
+        # Voeg de cache buster toe aan de URL
+        full_url = f"{github_base_url}{station_id}/weather_{year}.csv?v={cache_buster}" 
         
         try:
             # Laad alleen de header en de eerste rij (nrows=1) voor een snelle check
@@ -75,7 +78,7 @@ def discover_available_years(start_year, station_id, github_base_url):
     return sorted(available_years)
 
 
-# >> AANPASSING HIER: ttl=300 (5 minuten) toegevoegd voor automatische herlading <<
+# >> AANPASSING 2: ttl=300 (5 minuten) en Cache Buster <<
 @st.cache_data(ttl=300)
 def load_data(station_id, years, github_base_url, station_map, target_timezone):
     """
@@ -83,12 +86,16 @@ def load_data(station_id, years, github_base_url, station_map, target_timezone):
     """
     all_years_data = []
     station_name = station_map.get(station_id, station_id)
+    
+    # Cache Buster: Gebruik de huidige tijd (deze verandert elke keer dat de functie daadwerkelijk draait)
+    cache_buster = datetime.datetime.now().strftime("%Y%m%d%H%M%S") 
 
     for year in years:
-        # Gebruik f-string voor URL in plaats van os.path.join
-        full_url = f"{github_base_url}{station_id}/weather_{year}.csv"
+        # Voeg de cache buster toe aan de URL
+        full_url = f"{github_base_url}{station_id}/weather_{year}.csv?v={cache_buster}"
 
         try:
+            # pd.read_csv zal nu de cache buster gebruiken in de URL
             df = pd.read_csv(full_url, sep=';', on_bad_lines='skip')
 
             df['Timestamp_UTC_str'] = df['datum_waarneming_UTC'] + ' ' + df['tijd_waarneming_UTC']
@@ -1078,8 +1085,8 @@ else:
                 Max_Temp_Abs=('Temp_High_C', 'max'),
                 Min_Temp_Abs=('Temp_Low_C', 'min'),
                 Avg_Temp=('Temp_Avg_C', 'mean'),
-                Avg_Druk=('Pres_Avg_hPa', 'mean'),
-                Avg_Vocht=('Hum_Avg_P', 'mean'),
+                Avg_Druk=('druk', 'mean'),
+                Avg_Vocht=('luchtvocht', 'mean'),
             )
             
             df_summary_stats_display = df_summary_stats.rename(columns={
