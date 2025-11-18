@@ -59,6 +59,10 @@ CLIMATE_NORMAL_PERIODS = {
     "1940-1969": ("1940-01-01", "1969-12-31"),
 }
 
+# NIEUW: Bepaling van de totale periode voor één API-oproep (om 429 errors te voorkomen)
+BENCHMARK_START_DATE_FULL = "1940-01-01"
+BENCHMARK_END_DATE_FULL = "2019-12-31" 
+
 
 # 2. Functies voor Data (Loading & Processing)
 
@@ -127,15 +131,14 @@ def load_data(station_id, years, github_base_url, station_map, target_timezone):
     else:
         return pd.DataFrame() 
 
-
 # -------------------------------------------------------------------
-# GECORRIGEERDE FUNCTIE: Ophalen Externe Historische Data via Open-Meteo API
-# ACCEPTEERT NU start_date_str en end_date_str
+# NIEUWE FUNCTIE: Ophalen COMPLETE Externe Historische Data via Open-Meteo API (Grote Cache)
+# Wordt eenmaal aangeroepen om alle benchmark data te verzamelen.
 # -------------------------------------------------------------------
-@st.cache_data(ttl=86400) # Cache voor 24 uur, maar verandert met de input parameters
-def fetch_historical_benchmark_data(start_date_str, end_date_str):
+@st.cache_data(ttl=86400, show_spinner="Laden complete historische benchmark data (1940-2019)...") 
+def fetch_complete_historical_data(start_date_str, end_date_str):
     """
-    Haalt de historische data van een geselecteerde klimaatnormaalperiode op via de Open-Meteo API (ERA5).
+    Haalt de volledige reeks historische data op in één keer om rate limits te vermijden.
     """
     LAT = 62.9977
     LON = 17.0811
@@ -144,8 +147,8 @@ def fetch_historical_benchmark_data(start_date_str, end_date_str):
     params = {
         "latitude": LAT,
         "longitude": LON,
-        "start_date": start_date_str, # Nu variabel
-        "end_date": end_date_str,     # Nu variabel
+        "start_date": start_date_str, 
+        "end_date": end_date_str,     
         "daily": "temperature_2m_max,temperature_2m_min,temperature_2m_mean",
         "timezone": "Europe/Stockholm",
         "format": "csv"
@@ -160,7 +163,6 @@ def fetch_historical_benchmark_data(start_date_str, end_date_str):
         
         df_hist.columns = df_hist.columns.str.strip()
         
-        # Kolomnamen uit de API (nu met '°C')
         df_hist = df_hist.rename(columns={
             'time': 'Date',
             'temperature_2m_max (°C)': 'Temp_High_C', 
@@ -168,24 +170,85 @@ def fetch_historical_benchmark_data(start_date_str, end_date_str):
             'temperature_2m_mean (°C)': 'Temp_Avg_C', 
         })
         
-        required_cols = ['Temp_Avg_C', 'Temp_High_C', 'Temp_Low_C']
-        if not all(col in df_hist.columns for col in required_cols):
-             error_message = f"❌ Kolomnamen in de historische data (ERA5) komen niet overeen na hernoemen. Benchmark overgeslagen."
-             return pd.DataFrame(), ('error', error_message)
-        
         df_hist['Date'] = pd.to_datetime(df_hist['Date'])
-        df_hist['Station Naam'] = 'Historische Benchmark'
         
-        # Pas succesmelding aan om de gekozen periode weer te geven
-        success_message = f"Langjarige benchmarkdata (Klimaatnormaal {start_date_str[:4]}-{end_date_str[:4]}) van {len(df_hist)} dagen succesvol geladen via Open-Meteo (ERA5)."
-        return df_hist.set_index('Date'), ('success', success_message) 
+        success_message = f"Complete historische data ({start_date_str[:4]}-{end_date_str[:4]}) van {len(df_hist)} dagen succesvol geladen via Open-Meteo (ERA5)."
+        return df_hist, ('success', success_message)
         
-    except requests.exceptions.RequestException as e:
-        error_message = f"❌ Kon historische data niet ophalen via API ({start_date_str[:4]}-{end_date_str[:4]}). Dit beïnvloedt alleen de Benchmark-analyse. Fout: {e}"
+    except requests.exceptions.HTTPError as e:
+        error_message = f"❌ Kon historische data niet ophalen via API. Fout: {e}. Probeer later opnieuw of herlaad de app."
         return pd.DataFrame(), ('error', error_message)
     except Exception as e:
-        error_message = f"⚠️ Algemene fout bij het verwerken van API-data ({start_date_str[:4]}-{end_date_str[:4]}). Benchmark wordt overgeslagen. Fout: {e}"
+        error_message = f"⚠️ Algemene fout bij het verwerken van API-data. Fout: {e}"
         return pd.DataFrame(), ('warning', error_message)
+
+# -------------------------------------------------------------------
+# GECORRIGEERDE FUNCTIE: Ophalen Externe Historische Data via Open-Meteo API (voor Enkelvoudige Benchmark)
+# Roept de complete set op en filtert lokaal.
+# -------------------------------------------------------------------
+@st.cache_data(ttl=86400) 
+def fetch_historical_benchmark_data(start_date_str, end_date_str):
+    """
+    Haalt de historische data van één geselecteerde klimaatnormaalperiode op.
+    Roept de complete dataset op en filtert de data lokaal om rate limits te vermijden.
+    """
+    # Stap 1: Haal de complete dataset op (deze is gecached)
+    df_complete, status = fetch_complete_historical_data(BENCHMARK_START_DATE_FULL, BENCHMARK_END_DATE_FULL)
+    
+    if df_complete.empty:
+        return pd.DataFrame(), status
+
+    # Stap 2: Filter de complete data op de gevraagde periode
+    df_hist = df_complete[
+        (df_complete['Date'] >= start_date_str) & 
+        (df_complete['Date'] <= end_date_str)
+    ].copy()
+    
+    if df_hist.empty:
+        error_message = f"❌ Geen data gevonden in de complete set voor de periode {start_date_str} tot {end_date_str}."
+        return pd.DataFrame(), ('error', error_message)
+    
+    # Stap 3: Voltooi de verwerking voor de enkelvoudige benchmark
+    df_hist['Station Naam'] = 'Historische Benchmark'
+    success_message = f"Langjarige benchmarkdata (Klimaatnormaal {start_date_str[:4]}-{end_date_str[:4]}) van {len(df_hist)} dagen succesvol gefilterd van de complete set."
+    return df_hist.set_index('Date'), ('success', success_message)
+
+# -------------------------------------------------------------------
+# GECORRIGEERDE FUNCTIE: Ophalen Externe Historische Data voor ALLE Klimaatnormalen
+# Roept de complete set op en filtert lokaal.
+# -------------------------------------------------------------------
+@st.cache_data(ttl=86400) # Cache voor 24 uur
+def fetch_all_historical_benchmarks(climate_normal_periods):
+    """
+    Haalt de historische data voor alle gedefinieerde klimaatnormaalperioden op.
+    Gebruikt de complete set en filtert lokaal om rate limits te vermijden.
+    """
+    all_benchmarks = {}
+    
+    # Stap 1: Haal de complete dataset op (deze is gecached)
+    df_complete, status = fetch_complete_historical_data(BENCHMARK_START_DATE_FULL, BENCHMARK_END_DATE_FULL)
+    
+    if df_complete.empty:
+        # Als de complete set niet geladen kan worden, stoppen we hier.
+        return all_benchmarks 
+
+    # Sorteer de perioden van oud naar nieuw (laagste startjaar eerst)
+    sorted_periods = sorted(climate_normal_periods.items(), key=lambda item: int(item[1][0][:4]), reverse=False)
+    
+    for period_name, (start_date_str, end_date_str) in sorted_periods:
+        
+        # Stap 2: Filter de complete data op de gevraagde periode
+        df_hist = df_complete[
+            (df_complete['Date'] >= start_date_str) & 
+            (df_complete['Date'] <= end_date_str)
+        ].copy()
+        
+        if not df_hist.empty:
+            df_hist['Periode'] = period_name.split('(')[0].strip() # '1990-2019'
+            period_key = period_name.split('(')[0].strip() 
+            all_benchmarks[period_key] = df_hist
+            
+    return all_benchmarks
 
 
 # Nieuwe, veilige formatteer functie
@@ -367,6 +430,7 @@ info_placeholder_start_year = None
 info_placeholder_years = None
 info_placeholder_last_check = None
 info_placeholder_benchmark = None 
+all_hist_benchmarks = {} # NIEUW: Initialisatie van de all_hist_benchmarks variabele
 
 # --- Initialiseer de Session State voor de Benchmark Selectie ---
 if 'benchmark_period_select' not in st.session_state:
@@ -632,8 +696,7 @@ else:
     df_daily_summary.index.name = 'Date' 
     
     # -------------------------------------------------------------
-    # NIEUW: Langjarig Gemiddelde (Historical Benchmark) Berekenen
-    # GEBRUIKT NU DE GESELECTEERDE PERIODE UIT SESSION STATE
+    # Langjarig Gemiddelde (Historical Benchmark) Berekenen
     # -------------------------------------------------------------
 
     df_hist_raw, benchmark_status = fetch_historical_benchmark_data(
@@ -676,6 +739,12 @@ else:
         ).drop(columns=['Month_Day']).set_index('Date')
         
         df_daily_summary.index.name = 'Date' 
+    
+    # -------------------------------------------------------------
+    # NIEUW: Ophalen van ALLE Historische Benchmarks voor Klimatologie Tab
+    # -------------------------------------------------------------
+    all_hist_benchmarks = fetch_all_historical_benchmarks(CLIMATE_NORMAL_PERIODS)
+
 
 # -------------------------------------------------------------------
 # --- Hoofdsectie met St.Tabs (Verbeterde Navigatie) ---
@@ -685,9 +754,9 @@ if df_combined.empty:
     st.warning("Geen weerdata geladen. Selecteer stations in de zijbalk.")
 else:
     
-    tab_titles_full = ["📈 Grafiek", "📊 Ruwe Data", "🔍 Historische Zoeker", "⭐ Maand/Jaar Analyse", "🏆 Extremen"]
+    tab_titles_full = ["📈 Grafiek", "📊 Ruwe Data", "🔍 Historische Zoeker", "⭐ Maand/Jaar Analyse", "🏆 Extremen", "🌎 Klimatologie"] # <--- HIER IS DE WIJZIGING
     
-    tab_graph, tab_raw, tab_history, tab_analysis, tab_extremes = st.tabs(tab_titles_full)
+    tab_graph, tab_raw, tab_history, tab_analysis, tab_extremes, tab_climatology = st.tabs(tab_titles_full) # <--- HIER IS DE WIJZIGING
     
     # --- Tab 1: Grafiek ---
     with tab_graph:
@@ -1289,7 +1358,10 @@ else:
                          value_name='Temperatuur (°C)'
                      )
                 else:
-                     df_benchmark_base = df_analysis_selector.reset_index()[['Date'] + existing_langjarig_cols].drop_duplicates().melt(
+                     df_benchmark_base = df_analysis_selector.reset_index()[['Date'] + existing_langjarig_cols].drop_duplicates()
+
+                     # De benchmark waarden zijn per dag gelijk, maar we moeten ze 'smelten' voor de plot
+                     df_benchmark_base = df_benchmark_base.melt(
                          id_vars=['Date'],
                          value_vars=existing_langjarig_cols,
                          var_name='Temperatuur Type',
@@ -1428,3 +1500,226 @@ else:
                     "Grootste Dagelijkse Temperatuurbereik (Top 5 Range per station)", 
                     "De Dagelijkse Range is het verschil tussen de Max Temp en de Min Temp op die dag (Grote schommelingen)."
                 )
+
+
+    # --- Tab 6: Klimatologie (NIEUW) ---
+    with tab_climatology:
+        
+        st.header("🌎 Klimatologie: Vergelijking per Periode")
+        st.info("Vergelijk de temperatuurextremen en gemiddeldes van een gekozen dag, maand of jaar met alle gedefinieerde historische klimaatnormalen (Langjarige Gemiddeldes van 30 jaar).")
+        
+        if not all_hist_benchmarks:
+            st.error("Geen historische benchmark data beschikbaar. Controleer de Open-Meteo API verbinding in de zijbalk (Programma Checks).")
+        else:
+            
+            with st.expander("⚙️ Kies Analyse Periode (Dag, Maand of Jaar)", expanded=True):
+
+                # Gebruik dezelfde logica als Tab 4 om de periode te selecteren
+                clima_analysis_type = st.radio(
+                    "Kies Analyse Niveau:",
+                    ["Dag", "Maand", "Jaar"], 
+                    key="clima_analysis_level"
+                )
+                
+                # Bepaal het zoekbereik
+                min_date_hist = df_daily_summary.index.min().date()
+                max_date_hist = df_daily_summary.index.max().date()
+                
+                selected_period_str_clima = None
+                df_clima_filter_base = df_daily_summary.copy()
+                
+                if clima_analysis_type == "Dag":
+                    
+                    default_date = max_date_hist
+                         
+                    selected_date = st.date_input(
+                        "Kies de Analyse Datum:",
+                        value=default_date,
+                        min_value=min_date_hist,
+                        max_value=max_date_hist,
+                        key="clima_analysis_day_select"
+                    )
+                    
+                    # Filter de dagelijkse samenvatting op de gekozen datum
+                    df_clima_filter_base = df_clima_filter_base[
+                        df_clima_filter_base.index.date == selected_date
+                    ]
+
+                    # De benchmark data wordt gefilterd op de maand-dag combinatie
+                    selected_period_str_clima = selected_date.strftime('%d-%m-%Y')
+                    clima_month_day = selected_date.strftime('%m-%d')
+
+
+                elif clima_analysis_type == "Maand":
+                    df_clima_filter_base['JaarMaand'] = df_clima_filter_base.index.to_period('M').astype(str)
+                    available_periods = sorted(df_clima_filter_base['JaarMaand'].unique(), reverse=True)
+                    titel_periode = "Jaar/Maand"
+
+                    selected_period_str_clima = st.selectbox(
+                        f"Kies de Analyse {titel_periode}:",
+                        available_periods,
+                        index=0,
+                        key="clima_analysis_period_select_month"
+                    )
+
+                    df_clima_filter_base = df_clima_filter_base[df_clima_filter_base['JaarMaand'] == selected_period_str_clima]
+                    df_clima_filter_base = df_clima_filter_base.drop(columns=['JaarMaand'])
+                    
+                else: # Jaar
+                    df_clima_filter_base['Jaar'] = df_clima_filter_base.index.year
+                    available_periods = sorted(df_clima_filter_base['Jaar'].unique(), reverse=True)
+                    titel_periode = "Jaar"
+
+                    selected_period_str_clima = st.selectbox(
+                        f"Kies de Analyse {titel_periode}:",
+                        available_periods,
+                        index=0,
+                        key="clima_analysis_period_select_year"
+                    )
+
+                    df_clima_filter_base = df_clima_filter_base[df_clima_filter_base['Jaar'] == selected_period_str_clima]
+                    df_clima_filter_base = df_clima_filter_base.drop(columns=['Jaar'])
+                
+
+            st.subheader(f"Analyse: **{selected_period_str_clima}**")
+            
+            # --- De huidige periode data ---
+            
+            # Voor dag, halen we de werkelijke meetwaarden op van die dag
+            if clima_analysis_type == "Dag":
+                df_huidige_data = df_clima_filter_base.reset_index().set_index('Station Naam').copy()
+                
+                df_huidige_data = df_huidige_data.rename(columns={
+                     'Temp_High_C': 'Abs. Max Temp (°C)',
+                     'Temp_Low_C': 'Abs. Min Temp (°C)',
+                     'Temp_Avg_C': 'Gem. Temp Periode (°C)',
+                })
+                
+                df_huidige_data['Type'] = f"Huidige Dag: {selected_period_str_clima}"
+
+            # Voor maand/jaar, berekenen we het gemiddelde over de dagen
+            else:
+                df_huidige_data = df_clima_filter_base.groupby('Station Naam').agg(
+                    Max_Temp_Abs=('Temp_High_C', 'max'),
+                    Min_Temp_Abs=('Temp_Low_C', 'min'),
+                    Avg_Temp=('Temp_Avg_C', 'mean'),
+                ).reset_index().set_index('Station Naam')
+                
+                df_huidige_data = df_huidige_data.rename(columns={
+                    'Max_Temp_Abs': 'Abs. Max Temp (°C)',
+                    'Min_Temp_Abs': 'Abs. Min Temp (°C)',
+                    'Avg_Temp': 'Gem. Temp Periode (°C)',
+                })
+                
+                df_huidige_data['Type'] = f"Huidige {clima_analysis_type}: {selected_period_str_clima}"
+                
+            
+            # --- De Benchmark data van alle periodes ---
+            
+            all_benchmark_stats = []
+            
+            # all_hist_benchmarks is gesorteerd van oud naar nieuw (door de functie fetch_all_historical_benchmarks)
+            for period_name, df_hist in all_hist_benchmarks.items():
+                
+                df_hist_copy = df_hist.copy()
+                
+                if clima_analysis_type == "Dag":
+                    
+                    df_period_data = df_hist_copy[df_hist_copy['Date'].dt.strftime('%m-%d') == clima_month_day]
+                    
+                    if not df_period_data.empty:
+                         # Gemiddelde van die specifieke dag door alle jaren heen
+                         # FIX: Gebruik alleen de numerieke kolommen om de TypeError te voorkomen
+                         period_stats = df_period_data[['Temp_High_C', 'Temp_Low_C', 'Temp_Avg_C']].mean().to_dict()
+                         
+                         df_stats = pd.DataFrame([{
+                             'Abs. Max Temp (°C)': period_stats.get('Temp_High_C'),
+                             'Abs. Min Temp (°C)': period_stats.get('Temp_Low_C'),
+                             'Gem. Temp Periode (°C)': period_stats.get('Temp_Avg_C'),
+                             'Type': f"Benchmark: {period_name}",
+                             'Station Naam': 'Langjarig Gemiddelde'
+                         }]).set_index('Station Naam')
+                         all_benchmark_stats.append(df_stats)
+                    
+                
+                elif clima_analysis_type == "Maand":
+                    
+                    # Filter op de gekozen maand
+                    # OPMERKING: Bij Maand is 'selected_period_str_clima' YYYY-MM. We willen alleen MM
+                    clima_month = selected_period_str_clima.split('-')[1]
+                    df_period_data = df_hist_copy[df_hist_copy['Date'].dt.strftime('%m') == clima_month]
+                    
+                    if not df_period_data.empty:
+                        # Gemiddelde van de dagelijkse Min, Max, Gem. over die maand, door alle 30 jaren heen
+                        period_stats = df_period_data.agg({
+                            'Temp_High_C': 'mean', # Gemiddelde van de Maxima op dagbasis over die maand
+                            'Temp_Low_C': 'mean',  # Gemiddelde van de Minima op dagbasis over die maand
+                            'Temp_Avg_C': 'mean',  # Gemiddelde van de Gemiddeldes op dagbasis over die maand
+                        }).to_dict()
+                        
+                        df_stats = pd.DataFrame([{
+                            'Abs. Max Temp (°C)': period_stats.get('Temp_High_C'),
+                            'Abs. Min Temp (°C)': period_stats.get('Temp_Low_C'),
+                            'Gem. Temp Periode (°C)': period_stats.get('Temp_Avg_C'),
+                            'Type': f"Benchmark: {period_name}",
+                            'Station Naam': 'Langjarig Gemiddelde'
+                        }]).set_index('Station Naam')
+                        all_benchmark_stats.append(df_stats)
+
+                else: # Jaar
+                    
+                    if not df_hist_copy.empty:
+                        # Gemiddelde van de dagelijkse Min, Max, Gem. over het hele jaar, door alle 30 jaren heen
+                        period_stats = df_hist_copy.agg({
+                            'Temp_High_C': 'mean',
+                            'Temp_Low_C': 'mean',
+                            'Temp_Avg_C': 'mean',
+                        }).to_dict()
+                        
+                        df_stats = pd.DataFrame([{
+                            'Abs. Max Temp (°C)': period_stats.get('Temp_High_C'),
+                            'Abs. Min Temp (°C)': period_stats.get('Temp_Low_C'),
+                            'Gem. Temp Periode (°C)': period_stats.get('Temp_Avg_C'),
+                            'Type': f"Benchmark: {period_name}",
+                            'Station Naam': 'Langjarig Gemiddelde'
+                        }]).set_index('Station Naam')
+                        all_benchmark_stats.append(df_stats)
+
+            
+            # --- Combineer en presenteer de resultaten ---
+            
+            df_clima_results_list = [df_huidige_data.reset_index()]
+            df_clima_results_list.extend([df.reset_index() for df in all_benchmark_stats])
+            
+            if df_clima_results_list:
+                df_clima_combined = pd.concat(df_clima_results_list, ignore_index=True)
+                
+                # Sorteervolgorde: Huidig > Nieuwste Benchmark > ... > Oudste Benchmark
+                period_names_sorted_for_display = [
+                    f"Huidige {clima_analysis_type}: {selected_period_str_clima}"
+                ] + [f"Benchmark: {period}" for period in reversed(list(all_hist_benchmarks.keys()))]
+                
+                period_order_map = {name: i for i, name in enumerate(period_names_sorted_for_display)}
+                df_clima_combined['Sort Order'] = df_clima_combined['Type'].map(period_order_map)
+                
+                df_clima_combined = df_clima_combined.sort_values(by=['Station Naam', 'Sort Order']).drop(columns=['Sort Order'])
+                
+                
+                # Formatteer de kolommen
+                for col in ['Abs. Max Temp (°C)', 'Abs. Min Temp (°C)', 'Gem. Temp Periode (°C)']:
+                    df_clima_combined[col] = df_clima_combined[col].apply(lambda x: f"{x:.1f} °C" if pd.notna(x) else "N/A")
+                
+                df_clima_final_display = df_clima_combined.rename(columns={'Type': 'Analyse Type'}).set_index(['Station Naam', 'Analyse Type'])
+                
+                # Toon per Station Naam (Langjarig Gemiddelde is ook een 'station' nu)
+                
+                for station, df_group in df_clima_final_display.groupby('Station Naam'):
+                    st.markdown(f"##### 📌 Station: **{station}**")
+                    df_to_show = df_group.reset_index().drop(columns=['Station Naam']).set_index('Analyse Type')
+                    
+                    # Verwijder kolommen die niet met temperatuur te maken hebben
+                    cols_to_keep = [col for col in df_to_show.columns if 'Temp' in col]
+                    st.dataframe(df_to_show[cols_to_keep], use_container_width=True)
+                    st.markdown("---")
+            else:
+                st.warning("Geen resultaten gevonden voor deze analyse.")
